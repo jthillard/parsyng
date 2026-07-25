@@ -1,13 +1,15 @@
+//! Implementation of the [`quote!`] and [`quote_spanned!`] procedural macros for `parsyng`.
+
 #![deny(
     clippy::all,
     clippy::pedantic,
     clippy::nursery,
     clippy::cargo,
-    // rustdoc::all,
+    rustdoc::all,
     rustdoc::redundant_explicit_links,
     invalid_doc_attributes,
     unused_doc_comments,
-    // missing_docs
+    missing_docs
 )]
 #![allow(clippy::too_many_lines)]
 
@@ -19,26 +21,26 @@ const INTERPOLATION_CHAR: char = '#';
 /// This works similarly to rust declarative macros, but using `#` instead of `$` for interpolation.
 ///
 /// Interpolation is done with `#variable`, or `#{ expression }`.
-/// Repetition can be done with `#(#vec),*`
+/// Repetition can be done with `#(#vec),*`, where `vec` must implement the [`Iterator`] trait.
 ///
 /// # Example
 /// ```
 /// use parsyng::quote;
-/// 
+///
 /// let number = 3;
 ///
 /// // Interpolation
 /// quote! {
 ///     foo(#number)
 /// };
-/// 
+///
 /// let literal = "This is a string literal";
 ///
 /// // Expression interpolation
 /// quote! {
 ///     let uppercase = #{ literal.to_uppercase() };
 /// };
-/// 
+///
 /// let digits = vec![2, 5, 3, 1];
 /// let mut digits = digits.iter();
 ///
@@ -52,6 +54,8 @@ pub fn quote(input: TokenStream) -> TokenStream {
     parse_tokenstream(input, false, &mut None, &mut Vec::new())
 }
 
+/// Builds a `compile_error! { ... }` token stream, used to surface errors from
+/// [`quote_spanned`] at the call site instead of panicking the proc-macro.
 fn make_compile_error(span: Span, inner: TokenStream) -> TokenStream {
     let mut error = TokenStream::new();
     error.extend::<[TokenTree; _]>([
@@ -62,6 +66,24 @@ fn make_compile_error(span: Span, inner: TokenStream) -> TokenStream {
     error
 }
 
+/// Like [`quote!`], but every generated token is built with the
+/// given [`Span`] instead of [`Span::call_site`].
+///
+/// The input starts with a span expression, followed by `=>`, followed by the
+/// same syntax accepted by [`quote!`](crate::quote).
+///
+/// # Example
+/// ```
+/// use parsyng::quote_spanned;
+/// use parsyng::proc_macro::Span;
+///
+/// let span = Span::call_site();
+/// let number = 3;
+///
+/// quote_spanned! {
+///     span => foo(#number)
+/// };
+/// ```
 #[proc_macro]
 pub fn quote_spanned(input: TokenStream) -> TokenStream {
     let mut span = TokenStream::new();
@@ -112,6 +134,18 @@ pub fn quote_spanned(input: TokenStream) -> TokenStream {
     result
 }
 
+/// Walks `stream` and emits a `{ ... }` block of Rust statements that rebuild it
+/// at runtime, expanding `#interpolation`, `#{expression}` and `#(...)*` as it
+/// goes. The returned block evaluates to a `parsyng::proc_macro::TokenStream`
+/// named `tokens`, except when called recursively for the body of a `#(...)*`
+/// repetition (`in_repetition.is_some()`), in which case it only pushes into the
+/// caller's `tokens` and returns no value.
+///
+/// `in_repetition` also doubles as the loop prologue being built for the
+/// enclosing repetition: each interpolated ident used inside it gets a
+/// `.next()`-and-break-on-`None` statement appended, which is why
+/// `repetition_ident_already_used` exists, to avoid emitting that statement more
+/// than once per ident.
 fn parse_tokenstream(
     stream: TokenStream,
     span: bool,
@@ -317,6 +351,10 @@ fn parse_tokenstream(
     TokenTree::Group(Group::new(proc_macro::Delimiter::Brace, output)).into()
 }
 
+/// Emits the statement(s) that push a single non-interpolated `tt` onto
+/// `tokens`, calling the matching `parsyng::quote::__private::push_*` helper
+/// for its kind (group, ident, punct or literal). Groups recurse through
+/// [`parse_tokenstream`] to build their own contents first.
 fn token_to_construction_code(
     output: &mut TokenStream,
     tt: TokenTree,

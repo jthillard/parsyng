@@ -1,3 +1,5 @@
+//! A whole source file: leading inner attributes followed by a list of items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -5,6 +7,15 @@ use crate::{
     ast::{attributes::parse_inner_attributes, item::Item},
 };
 
+/// The contents of an entire `.rs` file: any number of leading `#![...]`
+/// inner attributes, followed by any number of [`Item`]s.
+///
+/// This is the top-level entry point for parsing a complete module or crate
+/// root, as opposed to [`item::DeriveInput`](crate::ast::item::DeriveInput)
+/// (a single struct/enum, for `#[derive(...)]` macros) or a single
+/// [`Item`] (for `#[proc_macro_attribute]` macros applied to one item).
+///
+/// Reference: <https://doc.rust-lang.org/reference/crates-and-source-files.html>
 #[derive(Clone, Debug)]
 pub struct Crate {
     inner_attributes: Vec<crate::ast::attributes::Attribute>,

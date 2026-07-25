@@ -1,3 +1,5 @@
+//! `#[...]` outer and `#![...]` inner attributes.
+
 use crate::ToTokens;
 
 use crate::{
@@ -10,6 +12,12 @@ use crate::{
     proc_macro::{Span, TokenStream},
 };
 
+/// An attribute, either outer (`#[...]`) or inner (`#![...]`).
+///
+/// The bracketed content (`meta`) is kept as a raw [`TokenStream`] rather
+/// than parsed into a structured "path + arguments" representation.
+///
+/// Reference: <https://doc.rust-lang.org/reference/attributes.html>
 #[derive(Clone, Debug)]
 pub struct Attribute {
     pound: Pound,
@@ -18,11 +26,13 @@ pub struct Attribute {
 }
 
 impl Attribute {
+    /// `true` for `#![...]` (inner), `false` for `#[...]` (outer).
     #[must_use]
     pub const fn is_inner(&self) -> bool {
         self.bang.is_some()
     }
 
+    /// The span of the bracketed attribute content.
     #[must_use]
     pub fn span(&self) -> Span {
         self.meta.span()
@@ -47,6 +57,10 @@ impl ToTokens for Attribute {
     }
 }
 
+/// Parse as many leading outer (`#[...]`) attributes as possible.
+///
+/// Stops (without error) at the first token that isn't one — including at
+/// an inner attribute, which is rejected here and left for the caller.
 pub fn parse_outer_attributes(input: &mut ParseBuffer) -> Vec<Attribute> {
     let mut attributes = Vec::new();
     while let Ok(attribute) = input.try_advance(|input| {
@@ -65,6 +79,10 @@ pub fn parse_outer_attributes(input: &mut ParseBuffer) -> Vec<Attribute> {
     attributes
 }
 
+/// Parse as many leading inner (`#![...]`) attributes as possible.
+///
+/// Stops (without error) at the first token that isn't one — including at
+/// an outer attribute, which is rejected here and left for the caller.
 pub fn parse_inner_attributes(input: &mut ParseBuffer) -> Vec<Attribute> {
     let mut attributes = Vec::new();
     while let Ok(attribute) = input.try_advance(|input| {

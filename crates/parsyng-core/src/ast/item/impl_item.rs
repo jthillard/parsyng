@@ -1,3 +1,6 @@
+//! Members of an [`Implementation`](crate::ast::item::implementation::Implementation)
+//! block.
+
 use crate::ToTokens;
 
 use crate::{
@@ -12,17 +15,39 @@ use crate::{
     parse::Parse,
 };
 
+/// One member inside an `impl { ... }` block.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
 #[derive(Clone, Debug)]
 pub struct ImplItem {
     attributes: Vec<crate::ast::attributes::Attribute>,
     kind: ImplItemKind,
 }
 
+/// An [`ImplItem`]'s kind: an associated type, associated const, method, or
+/// a macro invocation in item position.
+///
+/// The method variant carries its own attributes and visibility, unlike
+/// [`TraitItemKind::Function`](crate::ast::item::trait_item::TraitItemKind::Function).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
 #[derive(Clone, Debug)]
 pub enum ImplItemKind {
+    /// An associated type.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
     Type(Box<TypeAlias>),
+    /// An associated const.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants>
     Const(Box<ConstantItem>),
+    /// A method.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
     Function(Box<ItemFunction>),
+    /// A macro invocation.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
     Macro(MacroInvocationItem),
 }
 

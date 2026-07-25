@@ -1,3 +1,6 @@
+//! `macro_rules!`/`macro` declarations, and macro invocations used in item
+//! position.
+
 use crate::ToTokens;
 
 use crate::{
@@ -10,6 +13,13 @@ use crate::{
     proc_macro::{Group, Ident},
 };
 
+/// A `macro_rules! name { ... }` declarative macro definition. The body is
+/// kept as a raw, opaque [`Group`].
+///
+/// Does not include leading attributes/visibility — see
+/// [`ItemMacroRules`](crate::ast::item::ItemMacroRules) for that.
+///
+/// Reference: <https://doc.rust-lang.org/reference/macros-by-example.html>
 #[derive(Clone, Debug)]
 pub struct MacroRulesItem {
     macro_rules_ident: Ident,
@@ -18,6 +28,13 @@ pub struct MacroRulesItem {
     body: Group,
 }
 
+/// A Rust-2.0-style `macro name { ... }` declarative macro definition. The
+/// body is kept as a raw, opaque [`Group`].
+///
+/// Does not include leading attributes/visibility — see
+/// [`ItemMacro`](crate::ast::item::ItemMacro) for that.
+///
+/// Reference: <https://doc.rust-lang.org/reference/macros-by-example.html>
 #[derive(Clone, Debug)]
 pub struct MacroItem {
     macro_token: Macro,
@@ -25,6 +42,14 @@ pub struct MacroItem {
     body: Group,
 }
 
+/// A macro invocation used in item position, e.g. `my_macro!{ ... }` or
+/// `my_macro!(...);`.
+///
+/// Reused beyond item position too — as
+/// [`Type::MacroInvocation`](crate::ast::type::Type::MacroInvocation) and
+/// [`ImplItemKind::Macro`](crate::ast::item::impl_item::ImplItemKind::Macro).
+///
+/// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
 #[derive(Clone, Debug)]
 pub struct MacroInvocationItem {
     path: SimplePath,

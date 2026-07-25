@@ -1,3 +1,7 @@
+//! `struct` items: [`Struct`] (wrapped, with attributes and visibility, as
+//! [`ItemStruct`](crate::ast::item::ItemStruct)), its field list
+//! ([`StructFields`]), and named/tuple field types.
+
 use crate::ToTokens;
 
 use crate::ast::attributes::Attribute;
@@ -16,29 +20,43 @@ use crate::{
     proc_macro::{Delimiter, Ident, Span},
 };
 
+/// A `struct` item, without its leading attributes/visibility (see
+/// [`ItemStruct`](crate::ast::item::ItemStruct) for that): `struct
+/// Foo<T> where ... { a: A }`, a tuple struct, or a unit struct.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
 #[derive(Clone, Debug)]
 pub struct Struct {
     #[allow(clippy::struct_field_names)]
     struct_token: StructKeyword,
     ident: Ident,
+    /// This struct's generic parameters, if any.
     pub generic_parameters: Option<GenericParams>,
     where_clause: Option<WhereClause>,
+    /// This struct's fields.
     pub fields: StructFields,
     semicolon: Option<Semicolon>,
 }
 
 impl Struct {
+    /// This struct's name.
     #[must_use]
     pub const fn ident(&self) -> &Ident {
         &self.ident
     }
+    /// This struct's generic parameters, if any.
     #[must_use]
     pub const fn generic_parameters(&self) -> Option<&GenericParams> {
         self.generic_parameters.as_ref()
     }
+    /// Mutable access to this struct's generic parameters, for adding trait
+    /// bounds before re-emitting them (see
+    /// [`TypeParamBounds::push`](crate::ast::item::TypeParamBounds::push)).
     pub const fn generic_parameters_mut(&mut self) -> Option<&mut GenericParams> {
         self.generic_parameters.as_mut()
     }
+    /// Split this struct's generics into the `impl<...>`, `Type<...>` and
+    /// `where ...` pieces needed to build a trait impl.
     pub fn split_generics_for_impl(
         &self,
     ) -> (
@@ -95,22 +113,40 @@ impl ToTokens for Struct {
     }
 }
 
+/// A named field in a [`StructFields::Named`] list: `pub a: i32`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
 #[derive(Clone, Debug)]
 pub struct StructField {
     attributes: Vec<Attribute>,
     visibility: Visibility,
+    /// This field's name.
     pub ident: Ident,
     colon_token: Colon,
     ty: Type,
 }
 
+/// A struct's field list: named (`{ a: A, b: B }`), tuple (`(A, B)`), or
+/// unit (no fields at all).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
 #[derive(Clone, Debug)]
 pub enum StructFields {
+    /// `{ a: A, b: B }`.
     Named(Box<Braced<Punctuated<StructField, Comma>>>),
+    /// `(A, B)`.
     Unnamed(Box<Parenthesized<Punctuated<TupleField, Comma>>>),
+    /// No fields.
     Unit,
 }
 
+/// One positional field in a [`StructFields::Unnamed`] tuple struct, e.g.
+/// `pub(crate) i32`.
+///
+/// Unlike [`StructField`], it has no `ident`, only a visibility-less type
+/// (visibility on tuple fields isn't parsed here).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
 #[derive(Clone, Debug)]
 pub struct TupleField {
     attributes: Vec<crate::ast::attributes::Attribute>,
@@ -118,10 +154,12 @@ pub struct TupleField {
 }
 
 impl StructField {
+    /// This field's span (its name).
     #[must_use]
     pub fn span(&self) -> Span {
         self.ident.span()
     }
+    /// This field's name.
     #[must_use]
     pub const fn ident(&self) -> &Ident {
         &self.ident
@@ -129,6 +167,7 @@ impl StructField {
 }
 
 impl TupleField {
+    /// This field's span (its type).
     #[must_use]
     pub fn span(&self) -> Span {
         self.ty.span()

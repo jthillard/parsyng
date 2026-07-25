@@ -1,3 +1,5 @@
+//! Type expressions.
+
 use crate::ToTokens;
 
 use crate::ast::item::macro_item::MacroInvocationItem;
@@ -17,24 +19,74 @@ use crate::{
     proc_macro::{Delimiter, Literal, Span, TokenStream},
 };
 
+/// A type expression: `T`, `&'a mut T`, `[T; N]`, `dyn Trait`, `fn(A) -> B`,
+/// and so on.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types.html>
 #[derive(Clone, Debug)]
 pub enum Type {
+    /// A parenthesized type `(T)`, used for disambiguation (as opposed to a
+    /// 1-element [`Tuple`](Self::Tuple) `(T,)`, which requires a trailing
+    /// comma).
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/tuple.html>
     Paren(Box<Parenthesized<Self>>),
+    /// `impl Trait`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/impl-trait.html>
     ImplTrait(TypeImplTrait),
+    /// A path used as a type, e.g. `std::vec::Vec<T>`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-types>
     Path(Box<TypePath>),
+    /// A tuple type: `(A, B)`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/tuple.html>
     Tuple(Box<Parenthesized<Punctuated<Self, Comma>>>),
+    /// The never type `!`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/never.html>
     Never(Not),
+    /// A raw pointer type: `*const T` / `*mut T`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#raw-pointers-const-and-mut>
     Pointer(TypePointer),
+    /// A reference type: `&'a mut T`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#references--and-mut>
     Reference(TypeReference),
+    /// An array type: `[T; N]`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/array.html>
     Array(Box<Bracketed<TypeArray>>),
+    /// A slice type: `[T]`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/slice.html>
     Slice(Box<Bracketed<Self>>),
+    /// `dyn Trait`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/trait-object.html>
     DynTrait(TypeDynTrait),
+    /// A fully qualified path: `<T as Trait>::Assoc`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#qualified-paths>
     QualifiedPath(Box<TypeQualifiedPath>),
+    /// A bare function pointer type: `fn(A) -> B`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
     BareFn(Box<TypeBareFn>),
+    /// A macro invocation used as a type.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
     MacroInvocation(MacroInvocationItem),
 }
 
 impl Type {
+    /// This type's span.
+    ///
+    /// # Panics
+    /// Only the [`Never`](Self::Never) variant is implemented so far; every
+    /// other variant panics (`todo!()`).
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
@@ -44,6 +96,11 @@ impl Type {
     }
 }
 
+/// A path used as a type, e.g. `std::vec::Vec<T>`. See
+/// [`ast::path::SimplePath`](crate::ast::path::SimplePath) for the
+/// generics-free equivalent used elsewhere (`use` trees, macro paths).
+///
+/// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-types>
 #[derive(Clone, Debug)]
 pub struct TypePath {
     start_token: Option<PathSep>,
@@ -52,12 +109,16 @@ pub struct TypePath {
 }
 
 impl TypePath {
+    /// The span of this path's first segment.
     #[must_use]
     pub fn span(&self) -> Span {
         self.root.span()
     }
 }
 
+/// A reference type: `&'a mut T`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#references--and-mut>
 #[derive(Clone, Debug)]
 pub struct TypeReference {
     and_token: And,
@@ -66,12 +127,20 @@ pub struct TypeReference {
     elem: Box<Type>,
 }
 
+/// Whether a [`TypePointer`] is `*const` or `*mut`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#raw-pointers-const-and-mut>
 #[derive(Clone, Debug)]
 pub enum TypePointerKind {
+    /// `*const T`.
     Const(Const),
+    /// `*mut T`.
     Mut(Mut),
 }
 
+/// A raw pointer type: `*const T` / `*mut T`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#raw-pointers-const-and-mut>
 #[derive(Clone, Debug)]
 pub struct TypePointer {
     star_token: Star,
@@ -79,6 +148,10 @@ pub struct TypePointer {
     elem: Box<Type>,
 }
 
+/// An array type: `[T; N]` (the length `N` is kept as a raw, unparsed
+/// [`TokenStream`] rather than a full expression).
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/array.html>
 #[derive(Clone, Debug)]
 pub struct TypeArray {
     elem: Box<Type>,
@@ -86,18 +159,27 @@ pub struct TypeArray {
     len: TokenStream,
 }
 
+/// An `impl Trait` type: `impl Trait + 'a`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/impl-trait.html>
 #[derive(Clone, Debug)]
 pub struct TypeImplTrait {
     impl_token: Impl,
     bounds: TypeParamBounds,
 }
 
+/// A `dyn Trait` type: `dyn Trait + 'a`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/trait-object.html>
 #[derive(Clone, Debug)]
 pub struct TypeDynTrait {
     dyn_token: Dyn,
     bounds: TypeParamBounds,
 }
 
+/// A bare function pointer type: `unsafe extern "C" fn(A, ...) -> B`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
 #[derive(Clone, Debug)]
 pub struct TypeBareFn {
     unsafety: Option<Unsafe>,
@@ -107,12 +189,20 @@ pub struct TypeBareFn {
     return_type: Option<(RArrow, Box<Type>)>,
 }
 
+/// One parameter of a [`TypeBareFn`]: a type, or the C-variadic `...`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
 #[derive(Clone, Debug)]
 pub enum BareFnParam {
+    /// A typed parameter.
     Type(Box<Type>),
+    /// C-variadic parameter `...`.
     Variadic(crate::ast::tokens::DotDotDot),
 }
 
+/// A fully qualified path: `<T as Trait>::Assoc::Path`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/paths.html#qualified-paths>
 #[derive(Clone, Debug)]
 pub struct TypeQualifiedPath {
     lt_token: Lt,

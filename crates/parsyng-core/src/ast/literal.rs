@@ -1,3 +1,8 @@
+//! Literal parsing.
+//!
+//! Only numeric literals (integer and float) are implemented; string, char
+//! and byte(-string) literals are `todo!()` in [`Literal`]'s [`Parse`] impl.
+
 use core::range::Range;
 use std::str::FromStr;
 
@@ -10,6 +15,15 @@ use crate::{
     proc_macro::{self, Span},
 };
 
+/// An integer literal, e.g. `0xFFu32`, `1_000`, `0b101`.
+///
+/// Stores the prefix (`0x`/`0b`/`0o`, if any) and type suffix (if any) as
+/// byte ranges into the original literal text; [`content`](Self::content)
+/// strips both, leaving just the digits. [`u8`]..[`usize`] each implement
+/// [`Parse`] directly on top of this type, additionally validating that the
+/// suffix (if present) matches their own type name.
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#integer-literals>
 #[derive(Debug, Clone)]
 pub struct LiteralNumber {
     content: String,
@@ -18,6 +32,9 @@ pub struct LiteralNumber {
     span: Span,
 }
 
+/// A floating-point literal, e.g. `1.5`, `1e10`, `1.0f64`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#floating-point-literals>
 #[derive(Debug, Clone)]
 pub struct LiteralFloat {
     content: String,
@@ -25,39 +42,57 @@ pub struct LiteralFloat {
     span: Span,
 }
 
+/// A literal token. Currently only dispatches to [`LiteralNumber`] or
+/// [`LiteralFloat`] — see the [module docs](self) for what's missing.
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#literals>
 #[derive(Debug, Clone)]
 pub enum Literal {
+    /// An integer literal.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/tokens.html#integer-literals>
     UInt(LiteralNumber),
+    /// A floating-point literal.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/tokens.html#floating-point-literals>
     Float(LiteralFloat),
 }
 
 impl LiteralNumber {
+    /// The digits, excluding any radix prefix or type suffix.
     #[must_use]
     pub fn content(&self) -> &str {
         &self.content[self.prefix.end..self.suffix.start]
     }
+    /// The radix prefix (`0x`, `0b`, `0o`), or an empty string if there is
+    /// none (decimal).
     #[must_use]
     pub fn prefix(&self) -> &str {
         &self.content[self.prefix]
     }
+    /// The type suffix (e.g. `u32`), or an empty string if there is none.
     #[must_use]
     pub fn suffix(&self) -> &str {
         &self.content[self.suffix]
     }
+    /// This literal's span.
     #[must_use]
     pub const fn span(&self) -> Span {
         self.span
     }
 }
 impl LiteralFloat {
+    /// The numeric part of the literal, excluding any type suffix.
     #[must_use]
     pub fn content(&self) -> &str {
         &self.content[0..self.suffix.start]
     }
+    /// The type suffix (e.g. `f64`), or an empty string if there is none.
     #[must_use]
     pub fn suffix(&self) -> &str {
         &self.content[self.suffix]
     }
+    /// This literal's span.
     #[must_use]
     pub const fn span(&self) -> Span {
         self.span

@@ -1,3 +1,5 @@
+//! `trait` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -14,6 +16,11 @@ use crate::{
     proc_macro::{Delimiter, Ident, TokenStream},
 };
 
+/// A `trait` item, without its leading attributes/visibility (see
+/// [`ItemTrait`](crate::ast::item::ItemTrait) for that): `unsafe auto trait
+/// Foo<T>: Bound where ... { ... }`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/traits.html>
 #[derive(Clone, Debug)]
 pub struct TraitItem {
     unsafety: Option<Unsafe>,
@@ -26,28 +33,51 @@ pub struct TraitItem {
     items: Braced<Vec<TraitItemMember>>,
 }
 
+/// One member inside a [`TraitItem`]'s body.
 #[derive(Clone, Debug)]
 pub struct TraitItemMember {
     attributes: Vec<crate::ast::attributes::Attribute>,
     kind: TraitItemKind,
 }
 
+/// A [`TraitItemMember`]'s kind: an associated type, associated const, or
+/// method (with an optional default body).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
 #[derive(Clone, Debug)]
 pub enum TraitItemKind {
+    /// An associated type.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
     Type(Box<TypeAlias>),
+    /// An associated const.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants>
     Const(Box<ConstantItem>),
+    /// A method, with an optional default body.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
     Function(Box<TraitFunction>),
 }
 
+/// A trait method declaration, with an optional default body.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
 #[derive(Clone, Debug)]
 pub struct TraitFunction {
     signature: FnSignature,
     body: TraitFunctionBody,
 }
 
+/// A [`TraitFunction`]'s body: a default `{ ... }` implementation (kept as a
+/// raw, unparsed [`TokenStream`]), or a bare `;` (no default).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
 #[derive(Clone, Debug)]
 pub enum TraitFunctionBody {
+    /// `{ ... }`.
     Block(Braced<TokenStream>),
+    /// A bare `;` (no default).
     Semicolon(crate::ast::tokens::Semicolon),
 }
 

@@ -9,11 +9,11 @@
     clippy::pedantic,
     clippy::nursery,
     clippy::cargo,
-    // rustdoc::all,
+    rustdoc::all,
     rustdoc::redundant_explicit_links,
     invalid_doc_attributes,
     unused_doc_comments,
-    // missing_docs
+    missing_docs
     // rustdoc::missing_doc_code_examples,
 )]
 #![allow(
@@ -34,8 +34,10 @@ pub use sealed::proc_macro;
 pub use proc_macro2 as proc_macro;
 
 /// AST nodes and token wrappers for Rust syntax fragments.
+///
 pub mod ast;
 /// Parser combinators used by the syntax tree types.
+///
 pub mod combinator;
 /// Error and diagnostic types returned by parsers.
 pub mod error;
@@ -44,15 +46,30 @@ pub mod parse;
 /// Helpers for proc-macro specific token manipulation.
 pub mod proc_macro_ext;
 /// Quote-related token construction helpers and macros.
+#[doc(hidden)]
 pub mod quote;
-/// Span helpers and utilities.
-pub mod span;
 
 pub use parse::Parse;
 
-/// `quote!` and `quote_spanned!` macros for constructing token streams.
 pub use parsyng_quote_macros::{quote, quote_spanned};
 
+/// Build a value of any [`Parse`] type from an almost-literal snippet of
+/// Rust syntax, combining [`quote!`] and [`parse::ParseBuffer::parse`] in one
+/// step.
+///
+/// Equivalent to `syn::parse_quote!`: the input accepts the same
+/// `#interpolation` syntax as [`quote!`], the resulting tokens are parsed as
+/// `T` (inferred from context), and parsing failures panic rather than
+/// returning a `Result` — use this for syntax you know must be valid (e.g.
+/// building a fixed piece of generated code), not for parsing arbitrary
+/// macro input.
+///
+/// ```ignore
+/// use parsyng::ast::r#type::Type;
+/// use parsyng::parse_quote;
+///
+/// let ty: Type = parse_quote!(Vec<u8>);
+/// ```
 #[macro_export]
 macro_rules! parse_quote {
     ($($t:tt)*) => {{
@@ -61,7 +78,15 @@ macro_rules! parse_quote {
     }};
 }
 
-/// Build a `Ident` using `format!`-style syntax.
+/// Build an [`Ident`](crate::proc_macro::Ident) using `format!`-style syntax,
+/// spanned at [`Span::call_site`](crate::proc_macro::Span::call_site).
+///
+/// ```ignore
+/// use parsyng::format_ident;
+///
+/// let index = 3;
+/// let ident = format_ident!("field_{}", index); // `field_3`
+/// ```
 #[macro_export]
 macro_rules! format_ident {
     ($($args:tt)*) => {
@@ -69,12 +94,20 @@ macro_rules! format_ident {
     };
 }
 
-/// Convert a value into a token stream.
+/// A type that can be appended to a [`TokenStream`](crate::proc_macro::TokenStream).
+///
+/// This is the counterpart to [`Parse`]: every [`ast`] node, and
+/// every combinator it is built from, implements `ToTokens` so it can be fed
+/// straight into [`quote!`]'s `#interpolation` or converted to a stand-alone
+/// token stream with [`to_token_stream`](Self::to_token_stream). The
+/// `#[derive(ToTokens)]` macro (exported from `parsyng-proc-macros`, and
+/// re-exported at the top of the `parsyng` facade crate) implements it
+/// automatically for structs whose fields are all themselves `ToTokens`.
 pub trait ToTokens {
-    /// Append this value to the provided token stream.
+    /// Append this value's tokens to the end of `tokens`.
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream);
 
-    /// Convert this value into a new token stream.
+    /// Convert this value into a new, stand-alone token stream.
     fn to_token_stream(&self) -> crate::proc_macro::TokenStream {
         let mut token_stream = crate::proc_macro::TokenStream::new();
         self.to_tokens(&mut token_stream);

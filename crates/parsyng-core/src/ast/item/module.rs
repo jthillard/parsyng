@@ -1,3 +1,5 @@
+//! `mod` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -9,6 +11,15 @@ use crate::{
     proc_macro::{Delimiter, Ident, TokenStream},
 };
 
+/// A `mod` item: `mod foo;` (external file) or `mod foo { ... }` (inline).
+///
+/// For `mod foo;`, `content` is `None`. For the inline form, the body is
+/// kept as raw, unparsed tokens rather than recursively parsed into
+/// [`Item`](crate::ast::item::Item)s. Does not include leading
+/// attributes/visibility — see [`ItemMod`](crate::ast::item::ItemMod) for
+/// that.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/modules.html>
 #[derive(Clone, Debug)]
 pub struct ModItem {
     mod_token: Mod,

@@ -1,3 +1,5 @@
+//! Free function items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -6,19 +8,32 @@ use crate::{
     proc_macro::{Delimiter, TokenStream},
 };
 
+/// A free function item, without its leading attributes/visibility (see
+/// [`ItemFunction`](crate::ast::item::ItemFunction) for that): `fn foo(...)
+/// -> T { ... }`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
 #[derive(Clone, Debug)]
 pub struct FunctionItem {
     signature: FnSignature,
     body: FunctionBody,
 }
 
+/// A [`FunctionItem`]'s body: a `{ ... }` block (kept as a raw, unparsed
+/// [`TokenStream`]) or a bare `;` (a bodiless declaration, as used in
+/// `extern` blocks and trait method declarations).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
 #[derive(Clone, Debug)]
 pub enum FunctionBody {
+    /// `{ ... }`.
     Block(Braced<TokenStream>),
+    /// A bare `;` (no body).
     Semicolon(Semicolon),
 }
 
 impl FunctionItem {
+    /// This function's signature.
     #[must_use]
     pub const fn signature(&self) -> &FnSignature {
         &self.signature

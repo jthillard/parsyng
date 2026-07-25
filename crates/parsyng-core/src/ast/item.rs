@@ -1,3 +1,13 @@
+//! Top-level items.
+//!
+//! Contains the [`Item`] enum, [`VisItem<T>`] (attributes + visibility +
+//! inner item), [`DeriveInput`], and the
+//! generics/where-clause/lifetime grammar shared by every item kind.
+//!
+//! Each concrete item kind (struct, enum, function, trait, impl, ...) lives
+//! in its own submodule below and is re-exported here as `pub type ItemXxx =
+//! VisItem<xxx::Xxx>` (e.g. [`ItemStruct`], [`ItemFunction`]).
+
 use core::ops::Deref;
 use std::ops::DerefMut;
 
@@ -51,34 +61,98 @@ pub mod r#struct;
 pub mod trait_item;
 pub mod r#use;
 
+/// A top-level Rust item: everything that can appear directly inside a
+/// module or [`Crate`](crate::ast::crate_source::Crate) — a struct, enum,
+/// function, trait, impl block, `use`, and so on.
+///
+/// Every variant already bundles the item's leading attributes and
+/// visibility (via [`VisItem`]); parsing consumes those first, then tries
+/// each concrete item kind in turn.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items.html>
 #[derive(Clone, Debug)]
 pub enum Item {
+    /// A `struct` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
     Struct(ItemStruct),
+    /// A `const` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/constant-items.html>
     Const(ItemConst),
+    /// A `type` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/type-aliases.html>
     TypeAlias(Box<ItemTypeAlias>),
+    /// A `use` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html>
     Use(ItemUse),
+    /// An `extern crate` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/extern-crates.html>
     ExternCrate(ItemExternCrate),
+    /// An `extern` block.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/external-blocks.html>
     ExternBlock(ItemExternBlock),
+    /// A `mod` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/modules.html>
     Mod(ItemMod),
+    /// An `enum` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
     Enum(ItemEnum),
+    /// A free function item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
     Function(Box<ItemFunction>),
+    /// A `trait` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/traits.html>
     Trait(ItemTrait),
+    /// A `static` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/static-items.html>
     Static(ItemStatic),
+    /// A `macro_rules!` declarative macro.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros-by-example.html>
     MacroRules(ItemMacroRules),
+    /// A Rust-2.0-style `macro` declarative macro.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros-by-example.html>
     Macro(ItemMacro),
+    /// A macro invocation in item position.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
     MacroInvocation(ItemMacroInvocation),
+    /// An `impl` block.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/implementations.html>
     Impl(ItemImpl),
 }
 
+/// A `const` generic parameter, e.g. `const N: usize = 5` inside `<...>`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html#const-generics>
 #[derive(Clone, Debug)]
 pub struct ConstParam {
     const_token: Const,
+    /// This parameter's name.
     pub ident: Ident,
     colon: Colon,
     ty: Type,
     default: Option<(Eq, Type)>,
 }
 
+/// Adds leading outer attributes and a [`Visibility`] to any inner item type
+/// `T`.
+///
+/// This is the type every `ItemXxx` alias (e.g. [`ItemStruct`]) expands to;
+/// it [`Deref`]s to `T`, so `T`'s own methods are callable directly on a
+/// `VisItem<T>`.
 #[derive(Clone, Debug)]
 pub struct VisItem<T> {
     attributes: Vec<Attribute>,
@@ -86,13 +160,34 @@ pub struct VisItem<T> {
     item: T,
 }
 
+/// The input to a `#[derive(...)]` macro: either a struct or an enum (the
+/// only two kinds `#[derive]` can be applied to).
+///
+/// This is the type a
+/// function annotated with `#[parsyng::proc_macro_derive]` typically takes
+/// as its input parameter.
+///
+/// Reference: <https://doc.rust-lang.org/reference/procedural-macros.html#derive-macros>
+///
+/// # Limitations
+/// [`generics_parameters`](Self::generics_parameters),
+/// [`generics_parameters_mut`](Self::generics_parameters_mut) and
+/// [`split_generics_for_impl`](Self::split_generics_for_impl) only handle
+/// the [`Struct`](Self::Struct) variant so far; calling them on
+/// [`Enum`](Self::Enum) panics (`todo!()`).
 #[derive(Clone, Debug)]
 pub enum DeriveInput {
+    /// Deriving on a `struct`.
     Struct(Box<ItemStruct>),
+    /// Deriving on an `enum`.
     Enum(Box<ItemEnum>),
 }
 
 impl DeriveInput {
+    /// This type's generic parameters, if any.
+    ///
+    /// # Panics
+    /// Panics (`todo!()`) for the [`Enum`](Self::Enum) variant.
     #[must_use]
     pub fn generics_parameters(&self) -> Option<&GenericParams> {
         match self {
@@ -100,12 +195,23 @@ impl DeriveInput {
             Self::Enum(_vis_item) => todo!(),
         }
     }
+    /// Mutable access to this type's generic parameters, for adding trait
+    /// bounds before re-emitting them (see
+    /// [`TypeParamBounds::push`](TypeParamBounds::push)).
+    ///
+    /// # Panics
+    /// Panics (`todo!()`) for the [`Enum`](Self::Enum) variant.
     pub fn generics_parameters_mut(&mut self) -> Option<&mut GenericParams> {
         match self {
             Self::Struct(vis_item) => vis_item.generic_parameters_mut(),
             Self::Enum(_vis_item) => todo!(),
         }
     }
+    /// Split this type's generics into the `impl<...>`, `Type<...>` and
+    /// `where ...` pieces needed to build a trait impl.
+    ///
+    /// # Panics
+    /// Panics (`todo!()`) for the [`Enum`](Self::Enum) variant.
     #[must_use]
     pub fn split_generics_for_impl(
         &self,
@@ -122,6 +228,7 @@ impl DeriveInput {
 }
 
 impl DeriveInput {
+    /// The name of the struct or enum being derived on.
     #[must_use]
     pub fn ident(&self) -> &Ident {
         match self {
@@ -341,34 +448,61 @@ impl ToTokens for DeriveInput {
     }
 }
 
+/// A [`Struct`] item with its attributes and visibility.
 pub type ItemStruct = VisItem<Struct>;
+/// A [`ConstantItem`] item with its attributes and visibility.
 pub type ItemConst = VisItem<ConstantItem>;
+/// A [`TypeAlias`] item with its attributes and visibility.
 pub type ItemTypeAlias = VisItem<TypeAlias>;
+/// A [`UseItem`] item with its attributes and visibility.
 pub type ItemUse = VisItem<UseItem>;
+/// An [`ExternCrateItem`] with its attributes and visibility.
 pub type ItemExternCrate = VisItem<ExternCrateItem>;
+/// An [`ExternBlockItem`] with its attributes and visibility.
 pub type ItemExternBlock = VisItem<ExternBlockItem>;
+/// A [`ModItem`] with its attributes and visibility.
 pub type ItemMod = VisItem<ModItem>;
+/// An [`EnumItem`] with its attributes and visibility.
 pub type ItemEnum = VisItem<EnumItem>;
+/// A [`FunctionItem`] with its attributes and visibility.
 pub type ItemFunction = VisItem<FunctionItem>;
+/// A [`TraitItem`] with its attributes and visibility.
 pub type ItemTrait = VisItem<TraitItem>;
+/// A [`StaticItem`] with its attributes and visibility.
 pub type ItemStatic = VisItem<StaticItem>;
+/// A [`MacroRulesItem`] with its attributes and visibility.
 pub type ItemMacroRules = VisItem<MacroRulesItem>;
+/// A [`MacroItem`] with its attributes and visibility.
 pub type ItemMacro = VisItem<MacroItem>;
+/// A [`MacroInvocationItem`] with its attributes and visibility.
 pub type ItemMacroInvocation = VisItem<MacroInvocationItem>;
+/// An [`Implementation`] with its attributes and visibility.
 pub type ItemImpl = VisItem<Implementation>;
 
+/// A `where` clause: `where T: Clone, 'a: 'b`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
 #[derive(Clone, Debug)]
 pub struct WhereClause {
     where_keyword: Where,
     generics: Punctuated<WhereClauseItem, Comma, StopOnError>,
 }
 
+/// One bound inside a [`WhereClause`]: either a lifetime bound (`'a: 'b`) or
+/// a type bound (`T: Trait`).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
 #[derive(Clone, Debug)]
 pub enum WhereClauseItem {
+    /// A lifetime bound: `'a: 'b`.
     Lifetime(LifetimeWhereClauseItem),
+    /// A type bound: `T: Trait`.
     Type(Box<TypeBoundWhereClauseItem>),
 }
 
+/// A lifetime bound inside a `where` clause: `'a: 'b + 'c`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
 #[derive(Clone, Debug)]
 pub struct LifetimeWhereClauseItem {
     lifetime: Lifetime,
@@ -376,6 +510,9 @@ pub struct LifetimeWhereClauseItem {
     lifetime_bounds: Punctuated<Lifetime, Plus, StopOnError>,
 }
 
+/// A type bound inside a `where` clause: `for<'a> T: Trait<'a>`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
 #[derive(Clone, Debug)]
 pub struct TypeBoundWhereClauseItem {
     for_lifetimes: Option<(For, GenericParams)>,
@@ -384,18 +521,26 @@ pub struct TypeBoundWhereClauseItem {
     bounds: Option<TypeParamBounds>,
 }
 
+/// A generic parameter list: `<T: Clone, 'a, const N: usize>`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
 #[derive(Clone, Debug)]
 pub struct GenericParams {
+    /// The opening `<`.
     pub start_token: Lt,
+    /// The comma-separated list of parameters.
     pub generics: Punctuated<GenericParam, Comma, StopOnError>,
+    /// The closing `>`.
     pub last_token: Gt,
 }
 
 impl GenericParams {
+    /// Iterate over each parameter, in declaration order.
     #[must_use]
     pub fn iter(&self) -> PunctuatedIter<'_, GenericParam, Comma> {
         self.generics.iter()
     }
+    /// Iterate mutably over each parameter, in declaration order.
     #[must_use]
     pub fn iter_mut(&mut self) -> PunctuatedIterMut<'_, GenericParam, Comma> {
         self.generics.iter_mut()
@@ -418,21 +563,41 @@ impl<'a> IntoIterator for &'a mut GenericParams {
     }
 }
 
+/// One entry in a [`GenericParams`] list: a type, lifetime, or const
+/// parameter.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
 #[derive(Clone, Debug)]
 pub enum GenericParam {
+    /// A type parameter.
     Type(Box<TypeParam>),
+    /// A lifetime parameter.
     Lifetime(LifetimeParam),
+    /// A const parameter.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/generics.html#const-generics>
     Const(Box<ConstParam>),
 }
 
+/// A type generic parameter: `T: Bound1 + Bound2 = Default`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
 #[derive(Clone, Debug)]
 pub struct TypeParam {
+    /// This parameter's name.
     pub ident: Ident,
     colon: Option<Colon>,
+    /// This parameter's trait/lifetime bounds.
     pub bounds: TypeParamBounds,
     default: Option<(Eq, Type)>,
 }
 
+/// A `+`-separated list of trait/lifetime bounds: `Bound1 + Bound2 + 'a`.
+///
+/// Must not be empty (an empty list is represented by the absence of a
+/// `TypeParamBounds` altogether, e.g. `TypeParam::bounds` being unbounded).
+///
+/// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
 #[derive(Clone, Debug)]
 pub struct TypeParamBounds {
     bounds: Punctuated<TypeParamBound, Plus, StopOnError>,
@@ -445,25 +610,34 @@ impl Default for TypeParamBounds {
 }
 
 impl TypeParamBounds {
+    /// An empty bound list.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             bounds: Punctuated::new(),
         }
     }
+    /// Append one more bound, separated from the previous one by a `+`
+    /// spanned at `bound`'s own span.
     pub fn push(&mut self, bound: TypeParamBound) {
         let separator = Plus::new(bound.span());
         self.bounds.push((bound, separator));
     }
 }
 
+/// One bound inside a [`TypeParamBounds`] list: a trait bound or a lifetime.
+///
+/// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
 #[derive(Clone, Debug)]
 pub enum TypeParamBound {
+    /// A trait bound.
     Trait(Box<TraitBound>),
+    /// A lifetime bound.
     Lifetime(Lifetime),
 }
 
 impl TypeParamBound {
+    /// This bound's span.
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
@@ -473,12 +647,20 @@ impl TypeParamBound {
     }
 }
 
+/// A lifetime generic parameter: `'a: 'b + 'c`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
 #[derive(Clone, Debug)]
 pub struct LifetimeParam {
     lifetime: Lifetime,
     bounds: Option<(Colon, LifetimeBounds)>,
 }
 
+/// A trait bound, e.g. `?Sized`, `for<'a> Trait<'a>`, optionally wrapped in
+/// parentheses (`(?Sized)`) — `group` records the parenthesizing
+/// [`Group`], if present, so it can be re-emitted on the round trip.
+///
+/// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
 #[derive(Clone, Debug)]
 pub struct TraitBound {
     group: Option<Group>,
@@ -488,12 +670,16 @@ pub struct TraitBound {
 }
 
 impl TraitBound {
+    /// This bound's span.
     #[must_use]
     pub fn span(&self) -> Span {
         self.path.span()
     }
 }
 
+/// A lifetime, e.g. `'a`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#lifetimes-and-loop-labels>
 #[derive(Clone, Debug)]
 pub struct Lifetime {
     quote: Quote,
@@ -501,12 +687,16 @@ pub struct Lifetime {
 }
 
 impl Lifetime {
+    /// This lifetime's span.
     #[must_use]
     pub fn span(&self) -> Span {
         self.quote.span()
     }
 }
 
+/// A `+`-separated, non-empty list of lifetime bounds: `'b + 'c`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html#lifetime-bounds>
 #[derive(Clone, Debug)]
 pub struct LifetimeBounds {
     bounds: Punctuated<Lifetime, Plus, StopOnError>,

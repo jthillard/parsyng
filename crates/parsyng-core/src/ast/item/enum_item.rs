@@ -1,3 +1,5 @@
+//! `enum` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -14,6 +16,11 @@ use crate::{
     proc_macro::{Delimiter, Ident},
 };
 
+/// An `enum` item, without its leading attributes/visibility (see
+/// [`ItemEnum`](crate::ast::item::ItemEnum) for that): `enum Foo<T> where
+/// ... { ... }`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
 #[derive(Clone, Debug)]
 pub struct EnumItem {
     enum_token: Enum,
@@ -23,6 +30,9 @@ pub struct EnumItem {
     variants: Braced<Punctuated<EnumVariant, Comma>>,
 }
 
+/// One variant of an [`EnumItem`], e.g. `Foo { a: i32 } = 1`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
 #[derive(Clone, Debug)]
 pub struct EnumVariant {
     attributes: Vec<Attribute>,
@@ -31,13 +41,23 @@ pub struct EnumVariant {
     discriminant: Option<(Eq, TokenStreamUntilComma)>,
 }
 
+/// An [`EnumVariant`]'s fields: named (`{ a: A }`), tuple (`(A, B)`), or
+/// unit (no fields).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
 #[derive(Clone, Debug)]
 pub enum EnumVariantFields {
+    /// `{ a: A, b: B }`.
     Named(Braced<Punctuated<EnumField, Comma>>),
+    /// `(A, B)`.
     Unnamed(Parenthesized<Punctuated<Type, Comma>>),
+    /// No fields.
     Unit,
 }
 
+/// A named field inside an [`EnumVariantFields::Named`] variant.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
 #[derive(Clone, Debug)]
 pub struct EnumField {
     attributes: Vec<Attribute>,
@@ -47,6 +67,7 @@ pub struct EnumField {
 }
 
 impl EnumItem {
+    /// This enum's name.
     #[must_use]
     pub const fn ident(&self) -> &Ident {
         &self.ident

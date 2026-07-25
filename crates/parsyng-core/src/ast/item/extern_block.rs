@@ -1,3 +1,5 @@
+//! `extern` blocks.
+
 use crate::ToTokens;
 
 use crate::{
@@ -6,6 +8,11 @@ use crate::{
     proc_macro::{Literal, TokenStream},
 };
 
+/// An `extern` block, without its leading attributes/visibility (see
+/// [`ItemExternBlock`](crate::ast::item::ItemExternBlock) for that): `extern
+/// "C" { ... }` (the body is kept as raw, unparsed tokens).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/external-blocks.html>
 #[derive(Clone, Debug)]
 pub struct ExternBlockItem {
     extern_token: Extern,

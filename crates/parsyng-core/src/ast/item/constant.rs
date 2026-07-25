@@ -1,3 +1,5 @@
+//! `const` items.
+
 use crate::ToTokens;
 
 use crate::ast::tokens::Semicolon;
@@ -9,6 +11,13 @@ use crate::ast::{
 use crate::parse::Parse;
 use crate::proc_macro::Ident;
 
+/// A `const` item: `const NAME: Type = expr;` (the default-value expression
+/// is kept as raw, unparsed tokens).
+///
+/// Does not include leading attributes/visibility — see
+/// [`ItemConst`](crate::ast::item::ItemConst) for that.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/constant-items.html>
 #[derive(Clone, Debug)]
 pub struct ConstantItem {
     const_token: tokens::Const,

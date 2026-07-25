@@ -32,6 +32,11 @@ pub fn simple_macro(n: Crate) -> Result<TokenStream> {
     // Err(Diagnostics::new_error("{sen}"))
 }
 
+#[parsyng::proc_macro]
+pub fn add_one(n: u8) -> u8 {
+   n + 1
+}
+
 #[parsyng::proc_macro_attribute(debug)]
 pub fn simple_macro_attribute(attrs: Foo, _n: Crate) -> Result<Crate> {
     let _tokens = quote! {

@@ -1,3 +1,39 @@
+//! Keyword and punctuation token types, and the [`Token!`](crate::Token)
+//! macro used to name them.
+//!
+//! Every Rust keyword (`struct`, `fn`, `where`, ...) and every 1-to-3
+//! character punctuation sequence (`+`, `::`, `..=`, ...) has a
+//! corresponding zero-or-few-field type here (e.g. [`StructKeyword`],
+//! [`Plus`], [`PathSep`], [`DotDotEq`]) that implements
+//! [`Parse`]/[`ToTokens`], and [`Peek`] where matching it can never consume
+//! input on failure. Rather than write the type name directly, most code
+//! (including elsewhere in this crate) spells it with the
+//! [`Token!`](crate::Token) macro, matching the punctuation or keyword's
+//! surface syntax:
+//!
+//! ```ignore
+//! use parsyng::Token;
+//!
+//! fn parse_pub(input: &mut parsyng::parse::ParseBuffer) -> parsyng::error::Result<()> {
+//!     input.parse::<Token![pub]>()?;
+//!     input.parse::<Token![+]>()?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! `Token![struct]` expands to [`StructKeyword`], `Token![+]` expands to
+//! [`Plus`], and so on for all 53 keywords and ~45 punctuation sequences
+//! defined by the `make_tokens!` invocation below.
+//!
+//! All of these type aliases are backed by just two generic types,
+//! parameterized over `const` values rather than generated one struct at a
+//! time: [`RustKeyword<K>`] (keyword, selected by table index `K`) and
+//! [`RustPunct1`]/[`RustPunct2`]/[`RustPunct3`] (1-, 2- and 3-character
+//! punctuation, selected by the `char`s themselves).
+//!
+//! Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation> and
+//! <https://doc.rust-lang.org/reference/keywords.html>
+
 use crate::ToTokens;
 
 use crate::{
@@ -18,6 +54,16 @@ fn parse_keyword(input: &mut ParseBuffer, keyword: &str) -> Result<Ident> {
 
 macro_rules! make_tokens {
     (@keywords $($keyword:ident $i:literal => $keyword_name:ident)* @puncts $($punct:tt $($lit:literal),* => $punct_name:ident #[doc = $punct_usage:literal])*) => {
+        /// Names a keyword or punctuation token type by its surface syntax. See the [module docs](crate::ast::tokens)
+        /// for details.
+        ///
+        /// ```ignore
+        /// Token![struct] // == StructKeyword
+        /// Token![+]      // == Plus
+        /// ```
+        ///
+        /// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation> and
+        /// <https://doc.rust-lang.org/reference/keywords.html>
         #[macro_export]
         macro_rules! Token {
             $(
@@ -56,6 +102,8 @@ macro_rules! make_puncts {
     ($($t:tt $($lit:literal)* => $name:ident #[doc = $usage:literal])*) => {
         $(
             #[doc = $usage]
+            #[doc = ""]
+            #[doc = "Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>"]
             pub type $name = make_puncts!(@type $($lit)*);
         )*
     };
@@ -66,6 +114,8 @@ macro_rules! make_keywords {
 
         $(
             #[doc = concat!("`", stringify!($keyword), "` keyword")]
+            #[doc = ""]
+            #[doc = "Reference: <https://doc.rust-lang.org/reference/keywords.html>"]
             pub type $name = RustKeyword<$i>;
         )*
     };
@@ -179,6 +229,16 @@ make_tokens! {
     quote '\''          => Quote      /// single quotes, used in lifetimes
 }
 
+/// The generic type backing every keyword token alias (see the
+/// [module docs](self)), such as [`StructKeyword`] (`RustKeyword<39>`) or
+/// [`Pub`] (`RustKeyword<32>`).
+///
+/// `K` indexes into an internal table of the 53 Rust keywords; parsing
+/// succeeds only if the next identifier's text matches that keyword exactly.
+/// There is normally no need to name `RustKeyword<K>` directly — use the
+/// keyword's alias, or spell it with [`Token!`](crate::Token) (`Token![struct]`).
+///
+/// Reference: <https://doc.rust-lang.org/reference/keywords.html>
 #[derive(Debug, Clone)]
 pub struct RustKeyword<const K: u8> {
     ident: Ident,
@@ -198,26 +258,53 @@ impl<const K: u8> ToTokens for RustKeyword<K> {
     }
 }
 
+/// The generic type backing every 1-character punctuation alias, such as
+/// [`Plus`] (`RustPunct1<'+'>`) or [`Comma`] (`RustPunct1<','>`).
+///
+/// See the [module docs](self). There is normally no need to name it
+/// directly — use the punctuation's alias, or [`Token!`](crate::Token)
+/// (`Token![+]`).
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>
 #[derive(Debug, Clone)]
 pub struct RustPunct1<const A: char>([Punct; 1]);
 
+/// The generic type backing every 2-character punctuation alias, such as
+/// [`PathSep`] (`RustPunct2<':', ':'>`) or [`FatArrow`] (`RustPunct2<'=', '>'>`).
+///
+/// See the [module docs](self). There is normally no need to name it
+/// directly — use the punctuation's alias, or [`Token!`](crate::Token)
+/// (`Token![::]`).
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>
 #[derive(Debug, Clone)]
 pub struct RustPunct2<const A: char, const B: char>([Punct; 2]);
 
+/// The generic type backing every 3-character punctuation alias, such as
+/// [`DotDotEq`] (`RustPunct3<'.', '.', '='>`).
+///
+/// See the [module docs](self). There is normally no need to name it
+/// directly — use the punctuation's alias, or [`Token!`](crate::Token)
+/// (`Token![..=]`).
+///
+/// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>
 #[derive(Debug, Clone)]
 pub struct RustPunct3<const A: char, const B: char, const C: char>([Punct; 3]);
 
 impl<const A: char> RustPunct1<A> {
+    /// Build this punctuation token spanned at `span`.
     #[must_use]
     pub fn new(span: Span) -> Self {
         let mut punct = Punct::new(A, Spacing::Alone);
         punct.set_span(span);
         Self([punct])
     }
+    /// This token's span.
     #[must_use]
     pub fn span(&self) -> Span {
         self.0[0].span()
     }
+    /// The span of the single underlying [`Punct`].
     #[must_use]
     pub fn spans(&self) -> [Span; 1] {
         self.0.clone().map(|punct| punct.span())
@@ -225,6 +312,7 @@ impl<const A: char> RustPunct1<A> {
 }
 
 impl<const A: char, const B: char> RustPunct2<A, B> {
+    /// Build this punctuation token spanned at `span`.
     #[must_use]
     pub fn new(span: Span) -> Self {
         let mut punct1 = Punct::new(A, Spacing::Joint);
@@ -233,6 +321,7 @@ impl<const A: char, const B: char> RustPunct2<A, B> {
         punct2.set_span(span);
         Self([punct1, punct2])
     }
+    /// The spans of the two underlying [`Punct`]s.
     #[must_use]
     pub fn spans(&self) -> [Span; 2] {
         self.0.clone().map(|punct| punct.span())
@@ -240,6 +329,7 @@ impl<const A: char, const B: char> RustPunct2<A, B> {
 }
 
 impl<const A: char, const B: char, const C: char> RustPunct3<A, B, C> {
+    /// Build this punctuation token spanned at `span`.
     #[must_use]
     pub fn new(span: Span) -> Self {
         let mut punct1 = Punct::new(A, Spacing::Joint);
@@ -250,6 +340,7 @@ impl<const A: char, const B: char, const C: char> RustPunct3<A, B, C> {
         punct3.set_span(span);
         Self([punct1, punct2, punct3])
     }
+    /// The spans of the three underlying [`Punct`]s.
     #[must_use]
     pub fn spans(&self) -> [Span; 3] {
         self.0.clone().map(|punct| punct.span())
@@ -280,6 +371,7 @@ impl<const A: char, const B: char> Parse for RustPunct2<A, B> {
         let error_span: Span = input.span();
         if let Some(punct1) = input.punct()
             && punct1.as_char() == A
+            && punct1.spacing() == Spacing::Joint
             && let Some(punct2) = input.punct()
             && punct2.as_char() == B
         {
@@ -304,8 +396,10 @@ impl<const A: char, const B: char, const C: char> Parse for RustPunct3<A, B, C> 
         let error_span: Span = input.span();
         if let Some(punct1) = input.punct()
             && punct1.as_char() == A
+            && punct1.spacing() == Spacing::Joint
             && let Some(punct2) = input.punct()
             && punct2.as_char() == B
+            && punct2.spacing() == Spacing::Joint
             && let Some(punct3) = input.punct()
             && punct3.as_char() == C
         {

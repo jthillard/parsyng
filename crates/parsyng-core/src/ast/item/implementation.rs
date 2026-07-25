@@ -1,3 +1,5 @@
+//! `impl` blocks.
+
 use crate::ToTokens;
 
 use crate::{
@@ -10,6 +12,15 @@ use crate::{
     parse::Parse,
 };
 
+/// An `impl` block, without its leading attributes/visibility (see
+/// [`ItemImpl`](crate::ast::item::ItemImpl) for that): `unsafe impl<T>
+/// !Trait for Foo<T> where ... { ... }`.
+///
+/// `trait_impl` is `Some((negation, trait_path, for_token))` for a trait
+/// impl (the leading `Option<Not>` covers negative impls like `impl !Send
+/// for Foo`) and `None` for an inherent impl.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/implementations.html>
 #[derive(Clone, Debug)]
 pub struct Implementation {
     unsafety: Option<Unsafe>,

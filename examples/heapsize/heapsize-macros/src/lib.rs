@@ -51,7 +51,7 @@ fn heap_size_sum(data: &DeriveInput) -> TokenStream {
                     //
                     // but using fully qualified function call syntax.
                     //
-                    // We take some care to use the span of each `syn::Field` as
+                    // We take some care to use the span of each `parsyng::Field` as
                     // the span of the corresponding `heap_size_of_children`
                     // call. This way if one of the field types does not
                     // implement `HeapSize` then the compiler's error message

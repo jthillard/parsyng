@@ -1,3 +1,6 @@
+//! Function signatures, shared by free functions, trait methods, and
+//! `extern` block declarations.
+
 use crate::ToTokens;
 
 use crate::{
@@ -16,6 +19,13 @@ use crate::{
     proc_macro::{Ident, Literal},
 };
 
+/// A function signature: `const async unsafe extern "C" fn name<T>(params)
+/// -> T where ...`, without a body.
+///
+/// Used by [`FunctionItem`](crate::ast::item::function::FunctionItem) (with
+/// a body attached) and directly by trait function declarations.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
 #[derive(Clone, Debug)]
 pub struct FnSignature {
     const_token: Option<Const>,
@@ -30,13 +40,26 @@ pub struct FnSignature {
     where_clause: Option<WhereClause>,
 }
 
+/// One parameter in a [`FnSignature`]'s parameter list.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html#function-parameters>
 #[derive(Clone, Debug)]
 pub enum FnParam {
+    /// A `self` receiver.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#r-items.fn.params.self-pat>
     SelfParam(SelfParam),
+    /// A typed parameter: `pattern: Type`.
     Typed(PatType),
+    /// C-variadic parameter `...`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#r-items.fn.params.varargs>
     Variadic(DotDotDot),
 }
 
+/// A `self` receiver parameter, e.g. `&'a mut self` or `self: Box<Self>`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html#r-items.fn.params.self-pat>
 #[derive(Clone, Debug)]
 pub struct SelfParam {
     reference: Option<(And, Option<Lifetime>)>,
@@ -45,6 +68,9 @@ pub struct SelfParam {
     typed: Option<(Colon, Type)>,
 }
 
+/// A typed function parameter: `pattern: Type`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html#function-parameters>
 #[derive(Clone, Debug)]
 pub struct PatType {
     pat: Pattern,
@@ -53,6 +79,9 @@ pub struct PatType {
 }
 
 impl FnParam {
+    /// This parameter's type, if it has one written out (`None` for
+    /// [`Variadic`](Self::Variadic), and for a bare `self`/`&self` with no
+    /// explicit `: Type` annotation).
     #[must_use]
     pub fn ty(&self) -> Option<&Type> {
         match self {
@@ -61,6 +90,11 @@ impl FnParam {
             Self::Variadic(_) => None,
         }
     }
+    /// This parameter's bound name.
+    ///
+    /// # Panics
+    /// Panics (`todo!()`) if called on [`SelfParam`](Self::SelfParam) — not
+    /// yet implemented.
     #[must_use]
     pub fn ident(&self) -> Option<&Ident> {
         match self {
@@ -69,6 +103,11 @@ impl FnParam {
             Self::Variadic(_) => None,
         }
     }
+    /// Whether this parameter's pattern is `mut`.
+    ///
+    /// # Panics
+    /// Panics (`todo!()`) if called on [`SelfParam`](Self::SelfParam) — not
+    /// yet implemented.
     #[must_use]
     pub fn mutability(&self) -> Option<&Mut> {
         match self {
@@ -80,14 +119,17 @@ impl FnParam {
 }
 
 impl FnSignature {
+    /// The function's name.
     #[must_use]
     pub const fn ident(&self) -> &Ident {
         &self.ident
     }
+    /// The `-> T` return type, or `None` if the function returns `()`.
     #[must_use]
     pub fn return_type(&self) -> Option<&Type> {
         self.return_type.as_ref().map(|x| &x.1)
     }
+    /// The parenthesized, comma-separated parameter list.
     #[must_use]
     pub const fn args(&self) -> &Punctuated<FnParam, Comma> {
         self.params.inner_ref()

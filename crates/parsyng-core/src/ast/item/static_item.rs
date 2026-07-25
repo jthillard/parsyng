@@ -1,3 +1,5 @@
+//! `static` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -10,6 +12,13 @@ use crate::{
     proc_macro::Ident,
 };
 
+/// A `static` item: `static mut NAME: Type = expr;` (the default-value
+/// expression is kept as raw, unparsed tokens).
+///
+/// Does not include leading attributes/visibility — see
+/// [`ItemStatic`](crate::ast::item::ItemStatic) for that.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/static-items.html>
 #[derive(Clone, Debug)]
 pub struct StaticItem {
     static_token: tokens::Static,

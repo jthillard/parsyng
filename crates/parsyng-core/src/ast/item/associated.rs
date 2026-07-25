@@ -1,3 +1,6 @@
+//! Associated type aliases, shared between trait items, impl items and
+//! plain `type` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -12,6 +15,11 @@ use crate::{
     proc_macro::Ident,
 };
 
+/// A `type` item or associated type: `type Foo<T>: Bound where ... =
+/// SomeType where ...;`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/type-aliases.html> and
+/// <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
 #[derive(Clone, Debug)]
 pub struct TypeAlias {
     type_token: tokens::Type,
@@ -23,9 +31,20 @@ pub struct TypeAlias {
     semi: Semicolon,
 }
 
+/// A visible associated `type` or `const` item, as used where an associated
+/// item may carry its own [`Visibility`] independently of the enclosing
+/// block.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
 #[derive(Clone, Debug)]
 pub enum AssociatedAlias {
+    /// An associated `type`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
     TypeAlias(Visibility, Box<TypeAlias>),
+    /// An associated `const`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-constants>
     Const(Visibility, Box<ConstantItem>),
 }
 

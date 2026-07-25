@@ -1,3 +1,5 @@
+//! `use` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -10,6 +12,10 @@ use crate::{
     proc_macro::Ident,
 };
 
+/// A `use` item, without its leading attributes/visibility (see
+/// [`ItemUse`](crate::ast::item::ItemUse) for that): `use foo::bar;`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html>
 #[derive(Clone, Debug)]
 pub struct UseItem {
     use_token: Use,
@@ -17,15 +23,32 @@ pub struct UseItem {
     semi: Semicolon,
 }
 
+/// One node of a `use` tree.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#use-paths>
 #[derive(Clone, Debug)]
 pub enum UseTree {
+    /// `segment::rest`.
     Path(UsePath),
+    /// A bare name, e.g. `foo` (the leaf of a `use` tree).
     Name(Ident),
+    /// `foo as bar`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#as-renames>
     Rename(UseRename),
+    /// `*`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#glob-imports>
     Glob(Star),
+    /// `{a, b::c, d as e}`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#brace-syntax>
     Group(Box<UseGroup>),
 }
 
+/// One `segment::` prefix of a [`UseTree::Path`], with the remaining tree.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#use-paths>
 #[derive(Clone, Debug)]
 pub struct UsePath {
     ident: Ident,
@@ -33,6 +56,9 @@ pub struct UsePath {
     tree: Box<UseTree>,
 }
 
+/// A `foo as bar` rename inside a `use` tree.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#as-renames>
 #[derive(Clone, Debug)]
 pub struct UseRename {
     ident: Ident,
@@ -40,6 +66,9 @@ pub struct UseRename {
     rename: Ident,
 }
 
+/// A brace-delimited, comma-separated group of `use` sub-trees: `{a, b, c}`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#brace-syntax>
 #[derive(Clone, Debug)]
 pub struct UseGroup {
     group: Braced<Punctuated<UseTree, Comma>>,

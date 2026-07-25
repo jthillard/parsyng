@@ -1,9 +1,11 @@
 use simple_use_macros::Simple;
+use simple_use_macros::add_one;
 use simple_use_macros::simple_macro;
 use simple_use_macros::simple_macro_attribute;
 
 fn main() {
     println!("Hello, world!");
+    println!("{}", add_one!(5));
 
     simple_macro! {
         pub(in ::a::test) struct Foo<'a, 'b: '_ + 'static, T: 'a + Test<T> + Bar + ?Sized + (for<T> T)> where 'a: 'b, T: Add {

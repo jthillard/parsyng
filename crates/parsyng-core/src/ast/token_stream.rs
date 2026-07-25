@@ -1,3 +1,10 @@
+//! [`Parse`] implementations for the raw proc-macro token types themselves.
+//!
+//! Also includes helpers that capture a run of tokens up to a delimiter
+//! without parsing them, for grammar positions that [`ast`](crate::ast)
+//! intentionally leaves unparsed, such as a `const`'s default-value
+//! expression or an enum discriminant.
+
 use crate::ToTokens;
 
 use crate::error::{Diagnostics, Result};
@@ -53,12 +60,16 @@ impl Parse for crate::sealed::proc_macro::TokenStream {
     }
 }
 
+/// Captures every token up to (but not including) the next top-level `;`,
+/// without parsing them. Used e.g. for a `const`/`static` item's
+/// default-value expression.
 #[derive(Clone, Debug)]
 pub struct TokenStreamUntilSemicolon {
     tokens: TokenStream,
 }
 
 impl TokenStreamUntilSemicolon {
+    /// The captured tokens.
     #[must_use]
     pub const fn tokens(&self) -> &TokenStream {
         &self.tokens
@@ -84,12 +95,16 @@ impl ToTokens for TokenStreamUntilSemicolon {
     }
 }
 
+/// Captures every token up to (but not including) the next top-level `,`,
+/// without parsing them. Used e.g. for an enum variant's discriminant
+/// expression.
 #[derive(Clone, Debug)]
 pub struct TokenStreamUntilComma {
     tokens: TokenStream,
 }
 
 impl TokenStreamUntilComma {
+    /// The captured tokens.
     #[must_use]
     pub const fn tokens(&self) -> &TokenStream {
         &self.tokens
@@ -115,12 +130,15 @@ impl ToTokens for TokenStreamUntilComma {
     }
 }
 
+/// Captures every token up to (but not including) the next top-level `,` or
+/// `>`, without parsing them.
 #[derive(Clone, Debug)]
 pub struct TokenStreamUntilCommaOrGt {
     tokens: TokenStream,
 }
 
 impl TokenStreamUntilCommaOrGt {
+    /// The captured tokens.
     #[must_use]
     pub const fn tokens(&self) -> &TokenStream {
         &self.tokens

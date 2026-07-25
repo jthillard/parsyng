@@ -1,3 +1,6 @@
+//! Item visibility: `pub`, `pub(crate)`, `pub(self)`, `pub(in path)`, or
+//! private (no keyword at all).
+
 use crate::ToTokens;
 
 use crate::{
@@ -11,12 +14,31 @@ use crate::{
     proc_macro::Delimiter,
 };
 
+/// An item's visibility qualifier.
+///
+/// Used pervasively as the `visibility` field of
+/// [`VisItem<T>`](crate::ast::item::VisItem) and of a named struct field.
+/// Parsing never fails: the absence of a `pub` keyword is the valid
+/// [`Private`](Self::Private) variant, not an error.
+///
+/// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html>
 #[derive(Clone, Debug)]
 pub enum Visibility {
+    /// `pub`.
     Public(Pub),
+    /// `pub(crate)`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself>
     Crate(Pub, Parenthesized<Crate>),
+    /// `pub(self)`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself>
     SelfVis(Pub, Parenthesized<SelfValue>),
+    /// `pub(in path::to::mod)`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself>
     PubIn(Pub, Parenthesized<(In, SimplePath)>),
+    /// No visibility keyword at all (private to the containing module).
     Private,
 }
 

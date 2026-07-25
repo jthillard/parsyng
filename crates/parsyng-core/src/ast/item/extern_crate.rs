@@ -1,3 +1,5 @@
+//! `extern crate` items.
+
 use crate::ToTokens;
 
 use crate::{
@@ -6,6 +8,11 @@ use crate::{
     proc_macro::Ident,
 };
 
+/// An `extern crate` item, without its leading attributes/visibility (see
+/// [`ItemExternCrate`](crate::ast::item::ItemExternCrate) for that): `extern
+/// crate foo as bar;`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/extern-crates.html>
 #[derive(Clone, Debug)]
 pub struct ExternCrateItem {
     extern_token: Extern,
