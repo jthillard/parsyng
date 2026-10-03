@@ -26,7 +26,8 @@ use crate::{
 /// a body attached) and directly by trait function declarations.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct FnSignature {
     const_token: Option<Const>,
     async_token: Option<Async>,
@@ -43,7 +44,8 @@ pub struct FnSignature {
 /// One parameter in a [`FnSignature`]'s parameter list.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#function-parameters>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum FnParam {
     /// A `self` receiver.
     ///
@@ -60,7 +62,8 @@ pub enum FnParam {
 /// A `self` receiver parameter, e.g. `&'a mut self` or `self: Box<Self>`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#r-items.fn.params.self-pat>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct SelfParam {
     reference: Option<(And, Option<Lifetime>)>,
     mutability: Option<Mut>,
@@ -71,7 +74,8 @@ pub struct SelfParam {
 /// A typed function parameter: `pattern: Type`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#function-parameters>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatType {
     pat: Pattern,
     colon: Colon,

@@ -9,7 +9,7 @@ repository = "https://github.com/supersurviveur/parsyng"
 
 [dependencies]
 moxy = { version = "0.5", default-features = false, features = ["token", "ast", "template"] }
-parsyng-core = { path = "../../crates/parsyng-core", features = ["proc-macro2"] }
+parsyng = { path = "../..", features = ["fallback", "full"] }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }

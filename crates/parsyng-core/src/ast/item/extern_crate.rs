@@ -13,7 +13,8 @@ use crate::{
 /// crate foo as bar;`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/extern-crates.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ExternCrateItem {
     extern_token: Extern,
     crate_token: Crate,

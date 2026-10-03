@@ -55,7 +55,7 @@
 //!
 //! ```no_run
 //! # // `no_run`: constructing real `proc_macro` tokens outside of an actual
-//! # // macro invocation panics unless the `proc-macro2` feature is enabled;
+//! # // macro invocation panics unless the `fallback` feature is enabled;
 //! # // see "Feature flags" below.
 //! use parsyng::quote;
 //!
@@ -73,7 +73,7 @@
 //! # Parsing token streams
 //!
 //! ```no_run
-//! # // see the note above `quote!`'s example about `no_run` and `proc-macro2`
+//! # // see the note above `quote!`'s example about `no_run` and `fallback`
 //! use parsyng::ast::item::ItemStruct;
 //! use parsyng::parse::ParseBuffer;
 //! use parsyng::quote;
@@ -102,7 +102,7 @@
 //! `syn`:
 //!
 //! - A single crate with no required external dependency on `syn`/`quote`,
-//!   built directly on `proc_macro` (`proc_macro2` is opt-in).
+//!   built directly on `proc_macro` (a pure-Rust fallback is opt-in).
 //! - The [`macro@proc_macro`] / [`macro@proc_macro_attribute`] /
 //!   [`macro@proc_macro_derive`] helper attributes, which remove almost all of
 //!   the boilerplate `syn`/`quote`-based macros still need to hand-write
@@ -113,13 +113,18 @@
 //!
 //! # Feature flags
 //!
-//! - **`proc-macro2`** — use the `proc_macro2` crate instead of the
-//!   compiler's built-in `proc_macro` for every token type in [`ast`] and
-//!   [`quote!`]'s output. Required to call [`quote!`], [`parse_quote!`] or any
-//!   [`Parse`]/[`ToTokens`] implementation outside of an actual macro
-//!   invocation (for example, in unit tests or a `build.rs`), since the real
-//!   `proc_macro` crate panics when used outside the compiler's macro
-//!   expansion context.
+//! - **`fallback`** — use `parsyng-fallback`, a pure-Rust implementation of
+//!   the token types, instead of the compiler's built-in `proc_macro` for
+//!   every token type in [`ast`] and [`quote!`]'s output. Required to call
+//!   [`quote!`], [`parse_quote!`] or any [`Parse`]/[`ToTokens`]
+//!   implementation outside of an actual macro invocation (for example, in
+//!   unit tests or a `build.rs`), since the real `proc_macro` crate panics
+//!   when used outside the compiler's macro expansion context. Unlike
+//!   `proc_macro2`, it never forwards to the compiler: if a proc-macro crate
+//!   ends up built with it (e.g. a dev-dependency enabling it, which Cargo
+//!   unifies with the normal one when building tests), its macros still
+//!   work, but their input and output go through a print-and-re-lex
+//!   conversion that loses spans.
 //! - **`debug-pretty`** — when a macro built with [`macro@proc_macro`] or another helper is
 //!   annotated with the `debug` argument (e.g. `#[parsyng::proc_macro(debug)]`),
 //!   pipe its generated output through `rustfmt` before printing it, instead of
@@ -138,8 +143,40 @@
 )]
 
 pub use parsyng_core::*;
+pub use parsyng_quote_macros::{quote, quote_spanned};
 
+/// Build a value of any [`Parse`] type from an almost-literal snippet of
+/// Rust syntax, combining [`quote!`] and [`parse::ParseBuffer::parse`] in one
+/// step.
+///
+/// Equivalent to `syn::parse_quote!`: the input accepts the same
+/// `#interpolation` syntax as [`quote!`], the resulting tokens are parsed as
+/// `T` (inferred from context), and parsing failures (including leftover
+/// tokens) panic rather than returning a `Result` — use this for syntax you
+/// know must be valid (e.g.
+/// building a fixed piece of generated code), not for parsing arbitrary
+/// macro input.
+///
+/// ```ignore
+/// use parsyng::ast::r#type::Type;
+/// use parsyng::parse_quote;
+///
+/// let ty: Type = parse_quote!(Vec<u8>);
+/// ```
+#[cfg(feature = "parsing")]
+#[macro_export]
+macro_rules! parse_quote {
+    ($($t:tt)*) => {{
+        $crate::parse::parse_all($crate::quote! { $($t)* }).expect("`parse_quote!` failed to parse its input")
+    }};
+}
+
+
+#[cfg(feature = "parsing")]
 pub use parsyng_proc_macros::proc_macro_ as proc_macro;
+#[cfg(feature = "parsing")]
 pub use parsyng_proc_macros::proc_macro_attribute_ as proc_macro_attribute;
+#[cfg(feature = "parsing")]
 pub use parsyng_proc_macros::proc_macro_derive_ as proc_macro_derive;
+#[cfg(feature = "parsing")]
 pub use parsyng_proc_macros::{Parse, ToTokens};

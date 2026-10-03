@@ -79,36 +79,12 @@ fn parse_restricted_scrutinee(input: &mut ParseBuffer) -> Result<Expression> {
     ExpressionWithoutBlock::parse_top(input, false)
 }
 
-/// A const generic argument that can't be mistaken for a type: a
-/// `{ ... }` block, a literal, or `-` followed by a literal.
-///
-/// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-pub(crate) fn parse_generic_const_arg(input: &mut ParseBuffer) -> Result<Expression> {
-    if let Some(group) = input.peek_group()
-        && group.delimiter() == Delimiter::Brace
-    {
-        return Ok(Expression::WithBlock(Box::new(ExpressionWithBlock::Block(
-            input.parse()?,
-        ))));
-    }
-    if let Ok(literal) = input.try_parse() {
-        return Ok(wrap(ExpressionWithoutBlock::Literal(literal)));
-    }
-    let minus = input.parse()?;
-    let literal = input.parse()?;
-    Ok(wrap(ExpressionWithoutBlock::Unary(
-        UnaryExpression::Negation(NegationExpression {
-            op: NegOp::Neg(minus),
-            expr: wrap(ExpressionWithoutBlock::Literal(literal)),
-        }),
-    )))
-}
-
 /// Any expression: either [`WithBlock`](Self::WithBlock) or
 /// [`WithoutBlock`](Self::WithoutBlock) — see the [module docs](self).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Expression {
     /// An expression without a trailing `{ ... }` block.
     WithoutBlock(Box<ExpressionWithoutBlock>),
@@ -125,7 +101,8 @@ pub enum Expression {
 /// [`FieldExpression`]/[`CallExpression`] values.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum ExpressionWithoutBlock {
     /// A literal, e.g. `1`, `1.5`.
     ///
@@ -246,7 +223,8 @@ pub enum ExpressionWithoutBlock {
 /// block, `loop`, or `if`. See the [module docs](self).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum ExpressionWithBlock {
     /// A bare (possibly labeled) block: `{ ... }`.
     ///
@@ -289,7 +267,8 @@ pub enum ExpressionWithBlock {
 /// A bare block, optionally labeled: `'label: { ... }`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/block-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct BlockExpression {
     label: Option<(Lifetime, Colon)>,
     block: Braced<Vec<Statement>>,
@@ -298,7 +277,8 @@ pub struct BlockExpression {
 /// An `unsafe { ... }` block.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/block-expr.html#unsafe-blocks>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UnsafeBlockExpression {
     unsafe_token: Unsafe,
     block: Braced<Vec<Statement>>,
@@ -307,7 +287,8 @@ pub struct UnsafeBlockExpression {
 /// A `loop { ... }` expression, optionally labeled.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/loop-expr.html#infinite-loops>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LoopExpression {
     label: Option<(Lifetime, Colon)>,
     loop_token: Loop,
@@ -317,7 +298,8 @@ pub struct LoopExpression {
 /// An `if condition { ... } else ...` expression.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/if-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct IfExpression {
     if_token: If,
     condition: Conditions,
@@ -329,7 +311,8 @@ pub struct IfExpression {
 /// chains) or a plain block.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/if-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum ElseExpression {
     /// `else if ...` (chaining into another `if`).
     If(Box<IfExpression>),
@@ -347,7 +330,8 @@ pub enum ElseExpression {
 /// range (`let x = a..b && ...`) in a `let` scrutinee must be parenthesized.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/if-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Conditions {
     /// `let PATTERN = EXPR`.
     Let(Let, Pattern, Eq, Box<Expression>),
@@ -361,7 +345,8 @@ pub enum Conditions {
 }
 
 /// One `&&`-separated operand of a let-chain ([`Conditions::Chain`]).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Condition {
     /// `let PATTERN = EXPR`.
     Let(Let, Pattern, Eq, Box<Expression>),
@@ -373,7 +358,8 @@ pub enum Condition {
 /// `while let`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/loop-expr.html#predicate-loops>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct WhileExpression {
     label: Option<(Lifetime, Colon)>,
     while_token: While,
@@ -384,7 +370,8 @@ pub struct WhileExpression {
 /// A `for pat in expr { ... }` expression, optionally labeled.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/loop-expr.html#iterator-loops>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ForExpression {
     label: Option<(Lifetime, Colon)>,
     for_token: For,
@@ -397,7 +384,8 @@ pub struct ForExpression {
 /// A `match scrutinee { arm* }` expression.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/match-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MatchExpression {
     match_token: Match,
     scrutinee: Expression,
@@ -408,7 +396,8 @@ pub struct MatchExpression {
 /// pattern already covers `|` alternation (see [`Pattern::Or`]).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/match-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MatchArm {
     attrs: Vec<Attribute>,
     pat: Pattern,
@@ -421,7 +410,8 @@ pub struct MatchArm {
 /// An `async { ... }` / `async move { ... }` block.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/block-expr.html#async-blocks>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct AsyncBlockExpression {
     async_token: Async,
     move_token: Option<Move>,
@@ -431,7 +421,8 @@ pub struct AsyncBlockExpression {
 /// A `const { ... }` block.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/block-expr.html#const-blocks>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ConstBlockExpression {
     const_token: Const,
     block: Braced<Vec<Statement>>,
@@ -440,7 +431,8 @@ pub struct ConstBlockExpression {
 /// `expr.await`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/await-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct AwaitExpression {
     expr: Expression,
     dot: Dot,
@@ -449,7 +441,8 @@ pub struct AwaitExpression {
 /// `expr[index]`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/array-expr.html#array-and-slice-indexing-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct IndexExpression {
     expr: Expression,
     index: Bracketed<Expression>,
@@ -459,7 +452,8 @@ pub struct IndexExpression {
 /// [`GroupedExpression`] (`(expr)`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/tuple-expr.html#tuple-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TupleExpression {
     exprs: Parenthesized<Punctuated<Expression, Comma>>,
 }
@@ -467,7 +461,8 @@ pub struct TupleExpression {
 /// An array expression: `[a, b, c]` or `[x; n]`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/array-expr.html#array-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ArrayExpression {
     exprs: Bracketed<ArrayElements>,
 }
@@ -476,7 +471,8 @@ pub struct ArrayExpression {
 /// (`x; n`) or an element list (`a, b, c`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/array-expr.html#array-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum ArrayElements {
     /// `x; n` — repeat `x` `n` times.
     Repetition(Expression, Semicolon, Expression),
@@ -486,7 +482,8 @@ pub enum ArrayElements {
 /// `expr.0` (numeric tuple-field access).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/tuple-expr.html#tuple-indexing-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TupleIndexExpression {
     expr: Expression,
     dot: Dot,
@@ -496,7 +493,8 @@ pub struct TupleIndexExpression {
 /// `expr.field` (named field access).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/field-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct FieldExpression {
     expr: Expression,
     dot: Dot,
@@ -506,7 +504,8 @@ pub struct FieldExpression {
 /// `return` or `return expr`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/return-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ReturnExpression {
     return_token: Return,
     expr: Option<Expression>,
@@ -515,7 +514,8 @@ pub struct ReturnExpression {
 /// `continue` / `continue 'label`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/loop-expr.html#continue-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ContinueExpression {
     continue_token: Continue,
     label: Option<Lifetime>,
@@ -523,7 +523,8 @@ pub struct ContinueExpression {
 /// `break`, `break 'label`, or `break expr`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/loop-expr.html#break-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct BreakExpression {
     break_token: Break,
     label: Option<Lifetime>,
@@ -533,7 +534,8 @@ pub struct BreakExpression {
 /// `expr(a, b)` — a function call.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/call-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct CallExpression {
     expr: Expression,
     params: Parenthesized<Punctuated<Expression, Comma>>,
@@ -541,7 +543,8 @@ pub struct CallExpression {
 /// A range expression: `a..b`, `a..`, `..b`, `..`, `a..=b`, or `..=b`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/range-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct RangeExpression {
     start: Option<Expression>,
     dot: Option<DotDot>,
@@ -551,14 +554,16 @@ pub struct RangeExpression {
 /// The wildcard/placeholder expression `_`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/underscore-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UnderscoreExpression {
     underscore: Ident,
 }
 /// A parenthesized expression: `(expr)`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/grouped-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct GroupedExpression {
     group: Parenthesized<Expression>,
 }
@@ -567,7 +572,8 @@ pub struct GroupedExpression {
 /// attributes apply to the whole expression that follows.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions.html#expression-attributes>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct AttributedExpression {
     attrs: Vec<Attribute>,
     expr: Expression,
@@ -581,7 +587,8 @@ pub struct AttributedExpression {
 /// exactly.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#borrow-operators>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct BorrowExpression {
     amp: BorrowAmp,
     /// `raw` plus `const` for `&raw const`; `raw` alone for `&raw mut`,
@@ -592,7 +599,8 @@ pub struct BorrowExpression {
 }
 
 /// The `&`/`&&` token of a [`BorrowExpression`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum BorrowAmp {
     /// A single `&`.
     Single(And),
@@ -604,7 +612,8 @@ pub enum BorrowAmp {
 /// `*expr`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#the-dereference-operator>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct DereferenceExpression {
     star: Star,
     expr: Expression,
@@ -613,14 +622,16 @@ pub struct DereferenceExpression {
 /// `-expr` or `!expr`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#negation-operators>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct NegationExpression {
     op: NegOp,
     expr: Expression,
 }
 
 /// The operator of a [`NegationExpression`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum NegOp {
     /// `-`.
     Neg(Minus),
@@ -630,7 +641,8 @@ pub enum NegOp {
 
 /// A prefix operator expression: [`BorrowExpression`],
 /// [`DereferenceExpression`], or [`NegationExpression`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum UnaryExpression {
     /// `&expr` / `&mut expr` / `&&expr`.
     Borrow(BorrowExpression),
@@ -644,7 +656,8 @@ pub enum UnaryExpression {
 /// boolean binary operator — see [`BinOp`].
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#arithmetic-and-logical-binary-operators>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct BinaryExpression {
     lhs: Expression,
     op: BinOp,
@@ -652,7 +665,8 @@ pub struct BinaryExpression {
 }
 
 /// The operator of a [`BinaryExpression`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum BinOp {
     /// `+`.
     Add(Plus),
@@ -695,7 +709,8 @@ pub enum BinOp {
 /// `expr as Type`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#type-cast-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct CastExpression {
     expr: Expression,
     as_token: As,
@@ -705,7 +720,8 @@ pub struct CastExpression {
 /// `place = value`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#assignment-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct AssignmentExpression {
     lhs: Expression,
     eq: Eq,
@@ -716,7 +732,8 @@ pub struct AssignmentExpression {
 /// [`CompoundAssignOp`].
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#compound-assignment-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct CompoundAssignmentExpression {
     lhs: Expression,
     op: CompoundAssignOp,
@@ -724,7 +741,8 @@ pub struct CompoundAssignmentExpression {
 }
 
 /// The operator of a [`CompoundAssignmentExpression`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum CompoundAssignOp {
     /// `+=`.
     Add(PlusEq),
@@ -751,7 +769,8 @@ pub enum CompoundAssignOp {
 /// `expr?`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/operator-expr.html#the-question-mark-operator>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TryExpression {
     expr: Expression,
     question: Question,
@@ -761,7 +780,8 @@ pub struct TryExpression {
 /// trailing `(...)`, and from [`CallExpression`] by the leading `.method`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/method-call-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MethodCallExpression {
     expr: Expression,
     dot: Dot,
@@ -776,7 +796,8 @@ pub struct MethodCallExpression {
 /// (enforced by [`Parse`]); otherwise it's any [`Expression`].
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/closure-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ClosureExpression {
     async_token: Option<Async>,
     move_token: Option<Move>,
@@ -787,7 +808,8 @@ pub struct ClosureExpression {
 
 /// A [`ClosureExpression`]'s parameter list: `||` (no params) or
 /// `|a, b: T|`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum ClosureParams {
     /// `||`.
     Empty(OrOr),
@@ -797,7 +819,8 @@ pub enum ClosureParams {
 
 /// One parameter in a [`ClosureExpression`]'s parameter list: `pat` or
 /// `pat: Type`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ClosureParam {
     pat: Pattern,
     ty: Option<(Colon, Type)>,
@@ -807,14 +830,16 @@ pub struct ClosureParam {
 /// numeric field keys (`TupleStruct { 0: value }`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/struct-expr.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StructExpression {
     path: TypePath,
     fields: Braced<StructExprFields>,
 }
 
 /// The inside of a [`StructExpression`]'s braces.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StructExprFields {
     fields: Punctuated<StructExprField, Comma, StopOnError>,
     rest: Option<(DotDot, Box<Expression>)>,
@@ -822,14 +847,16 @@ pub struct StructExprFields {
 
 /// One field inside a [`StructExprFields`] list, with its outer attributes:
 /// `#[cfg(x)] field: expr`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StructExprField {
     attrs: Vec<Attribute>,
     kind: StructExprFieldKind,
 }
 
 /// The attribute-less part of a [`StructExprField`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum StructExprFieldKind {
     /// `field: expr` or `0: expr`.
     Named(StructExprMember, Colon, Expression),
@@ -838,7 +865,8 @@ pub enum StructExprFieldKind {
 }
 
 /// The key of a [`StructExprFieldKind::Named`] field.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum StructExprMember {
     /// A named field: `field`.
     Named(Ident),
@@ -853,7 +881,8 @@ pub enum StructExprMember {
 /// minus the (never-present, in expression position) trailing `;`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MacroCallExpression {
     path: SimplePath,
     bang: Not,
@@ -884,12 +913,14 @@ fn unwrap_without_block(expr: Expression, span: Span) -> Result<ExpressionWithou
 /// leading keywords, a `'label`, or a `{ ... }` group. A cheap filter so
 /// that [`ExpressionWithoutBlock::parse_primary`] only attempts the full
 /// [`ExpressionWithBlock`] parse when it has a chance to succeed.
-fn starts_block_like(input: &mut ParseBuffer) -> bool {
-    match input.peek() {
-        Some(TokenTree::Ident(ident)) => matches!(
-            ident.to_string().as_str(),
+fn starts_block_like(input: &ParseBuffer) -> bool {
+    if let Some(ident) = input.peek_ident_str() {
+        return matches!(
+            ident,
             "unsafe" | "if" | "loop" | "while" | "for" | "match" | "async" | "const"
-        ),
+        );
+    }
+    match input.peek() {
         Some(TokenTree::Punct(punct)) => punct.as_char() == '\'',
         Some(TokenTree::Group(group)) => group.delimiter() == Delimiter::Brace,
         _ => false,
@@ -1303,8 +1334,8 @@ impl ExpressionWithoutBlock {
         // `return`/`break`/`continue`/closures swallow an optional or
         // required trailing expression, so they take no postfix or binary
         // operator of their own.
-        if let Some(ident) = input.peek_ident() {
-            match ident.to_string().as_str() {
+        if let Some(ident) = input.peek_ident_str() {
+            match ident {
                 "return" => return Ok(wrap(Self::Return(input.parse()?))),
                 "break" => return Ok(wrap(Self::Break(input.parse()?))),
                 "continue" => return Ok(wrap(Self::Continue(input.parse()?))),
@@ -1383,9 +1414,8 @@ impl ExpressionWithoutBlock {
     fn parse_nested_tuple_index(
         input: &mut ParseBuffer,
     ) -> Option<(LiteralNumber, Dot, LiteralNumber)> {
-        let literal = input.peek_literal()?;
-        let text = literal.to_string();
-        let span = literal.span();
+        let text = input.peek_literal_str()?.to_owned();
+        let span = input.span();
         let (first, second) = text.split_once('.')?;
         let is_index = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
         if !is_index(first) || !is_index(second) {
@@ -1498,11 +1528,8 @@ impl ExpressionWithoutBlock {
         {
             return Ok(Expression::WithBlock(Box::new(block)));
         }
-        if let Some(ident) = input.peek_ident() {
-            #[allow(clippy::cmp_owned)]
-            if ident.to_string() == "_" {
-                return Ok(wrap(Self::Underscore(input.parse()?)));
-            }
+        if input.peek_ident_str() == Some("_") {
+            return Ok(wrap(Self::Underscore(input.parse()?)));
         }
         if let Some(group) = input.peek_group() {
             return if group.delimiter() == Delimiter::Parenthesis {
@@ -2119,15 +2146,10 @@ impl ToTokens for MethodCallExpression {
 
 impl Parse for UnderscoreExpression {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        let underscore: Ident = input.parse()?;
-        #[allow(clippy::cmp_owned)]
-        if underscore.to_string() == "_" {
+        if let Some(underscore) = input.ident_str_and(|text| text == "_") {
             Ok(Self { underscore })
         } else {
-            Err(Diagnostics::new_error_spanned(
-                "Expected `_`",
-                underscore.span(),
-            ))
+            Err(Diagnostics::new_error_spanned("Expected `_`", input.span()))
         }
     }
 }
@@ -2335,14 +2357,16 @@ impl Parse for Conditions {
 
 /// Whether a `let` keyword appears in the condition starting at `input`,
 /// i.e. before the first `{ ... }` group (the `if`/`while` body).
-#[allow(clippy::cmp_owned)]
 fn has_top_level_let(input: &ParseBuffer) -> bool {
-    for token in input.clone() {
-        match token {
-            TokenTree::Ident(ident) if ident.to_string() == "let" => return true,
-            TokenTree::Group(group) if group.delimiter() == Delimiter::Brace => return false,
-            _ => {}
+    let mut input = input.clone();
+    while !input.is_empty() {
+        if input.peek_ident_str() == Some("let") {
+            return true;
         }
+        if input.peek_delimiter() == Some(Delimiter::Brace) {
+            return false;
+        }
+        input.bump_token();
     }
     false
 }
@@ -2572,7 +2596,7 @@ mod tests {
                 }) => {}
                 _ => panic!("expected mul on rhs of add"),
             },
-            other => panic!("expected top-level add, got {other:?}"),
+            other => panic!("expected top-level add, got `{}`", other.to_token_stream()),
         }
     }
 
@@ -2590,10 +2614,16 @@ mod tests {
             ExpressionWithoutBlock::Assignment(AssignmentExpression { rhs, .. }) => {
                 match rhs_inner(&rhs) {
                     ExpressionWithoutBlock::Range(_) => {}
-                    other => panic!("expected range on rhs of assignment, got {other:?}"),
+                    other => panic!(
+                        "expected range on rhs of assignment, got `{}`",
+                        other.to_token_stream()
+                    ),
                 }
             }
-            other => panic!("expected top-level assignment, got {other:?}"),
+            other => panic!(
+                "expected top-level assignment, got `{}`",
+                other.to_token_stream()
+            ),
         }
     }
 
@@ -2603,9 +2633,9 @@ mod tests {
         match e {
             ExpressionWithoutBlock::Cast(CastExpression { expr, .. }) => match rhs_inner(&expr) {
                 ExpressionWithoutBlock::Cast(_) => {}
-                other => panic!("expected nested cast, got {other:?}"),
+                other => panic!("expected nested cast, got `{}`", other.to_token_stream()),
             },
-            other => panic!("expected top-level cast, got {other:?}"),
+            other => panic!("expected top-level cast, got `{}`", other.to_token_stream()),
         }
     }
 
@@ -2617,7 +2647,7 @@ mod tests {
                 amp: BorrowAmp::Double(_),
                 ..
             })) => {}
-            other => panic!("expected double borrow, got {other:?}"),
+            other => panic!("expected double borrow, got `{}`", other.to_token_stream()),
         }
     }
 
@@ -2757,7 +2787,10 @@ mod tests {
             }) => {
                 assert!(matches!(body, Expression::WithBlock(_)));
             }
-            other => panic!("expected closure with return type, got {other:?}"),
+            other => panic!(
+                "expected closure with return type, got `{}`",
+                other.to_token_stream()
+            ),
         }
     }
 
@@ -2810,7 +2843,7 @@ mod tests {
                     Expression::WithBlock(_) => panic!("expected WithoutBlock"),
                 }
             }
-            other => panic!("expected if-expression, got {other:?}"),
+            other => panic!("expected if-expression, got `{}`", other.to_token_stream()),
         }
     }
 

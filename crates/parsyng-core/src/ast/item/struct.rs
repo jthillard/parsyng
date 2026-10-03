@@ -25,7 +25,8 @@ use crate::{
 /// Foo<T> where ... { a: A }`, a tuple struct, or a unit struct.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Struct {
     #[allow(clippy::struct_field_names)]
     struct_token: StructKeyword,
@@ -124,7 +125,8 @@ impl ToTokens for Struct {
 /// A named field in a [`StructFields::Named`] list: `pub a: i32`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StructField {
     attributes: Vec<Attribute>,
     visibility: Visibility,
@@ -138,7 +140,8 @@ pub struct StructField {
 /// unit (no fields at all).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum StructFields {
     /// `{ a: A, b: B }`.
     Named(Box<Braced<Punctuated<StructField, Comma>>>),
@@ -154,7 +157,8 @@ pub enum StructFields {
 /// Unlike [`StructField`], it has no `ident`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TupleField {
     attributes: Vec<crate::ast::attributes::Attribute>,
     visibility: Visibility,

@@ -1,84 +1,92 @@
-use parsyng_core as parsyng;
+use proc_macro::{Delimiter, Ident, Literal, Span, TokenStream};
 
-use parsyng_core::ast::item::DeriveInput;
-use parsyng_core::proc_macro::TokenStream;
-use parsyng_core::{Index, error, parse, quote};
+use crate::tokens::{Data, DeriveInput, Fields, Out, Result};
 
-use crate::derive_common::{Fields, binding};
-
-/// Emit `field.to_tokens(tokens);` for each of `fields`.
-fn emit(fields: impl IntoIterator<Item = TokenStream>) -> Vec<TokenStream> {
-    fields
-        .into_iter()
-        .map(|field| quote! { parsyng::ToTokens::to_tokens(#field, tokens); })
-        .collect()
+/// A fresh binding name for the `index`-th field, used when destructuring
+/// enum variants (so that field names can't shadow the generated code's own
+/// variables).
+fn binding(index: usize) -> Ident {
+    Ident::new(&format!("__parsyng_field_{index}"), Span::call_site())
 }
 
-pub fn derive_to_tokens(input: TokenStream) -> error::Result<TokenStream> {
-    let input = parse::ParseBuffer::new(input).parse::<DeriveInput>()?;
+/// `parsyng::ToTokens::to_tokens(<field>, tokens);`
+fn emit(out: &mut Out, field: Out) {
+    let mut args = Out::new();
+    args.tokens(field.finish()).src(", tokens");
+    out.src("parsyng::ToTokens::to_tokens")
+        .group(Delimiter::Parenthesis, args)
+        .src(";");
+}
 
-    let body = match &input {
-        DeriveInput::Struct(item) => match Fields::of_struct(&item.fields) {
-            Fields::Named(names) => {
-                let fields = emit(names.iter().map(|name| quote! { &self.#name }));
-                quote! { #fields }
+pub fn derive_to_tokens(input: TokenStream) -> Result<TokenStream> {
+    let input = DeriveInput::parse(input)?;
+
+    let mut body = Out::new();
+    match &input.data {
+        Data::Struct(Fields::Named(names)) => {
+            for name in names {
+                let mut field = Out::new();
+                field.src("&self.").tree(name.clone());
+                emit(&mut body, field);
             }
-            Fields::Unnamed(count) => {
-                let fields = emit((0..count).map(|i| {
-                    let index = Index::from(i);
-                    quote! { &self.#index }
-                }));
-                quote! { #fields }
+        }
+        Data::Struct(Fields::Unnamed(count)) => {
+            for index in 0..*count {
+                let mut field = Out::new();
+                field.src("&self.").tree(Literal::usize_unsuffixed(index));
+                emit(&mut body, field);
             }
-            Fields::Unit => quote! { let _ = tokens; },
-        },
-        DeriveInput::Enum(item) => {
-            let mut arms = vec![];
-            for variant in item.variants() {
-                let ident = variant.ident();
-                let arm = match Fields::of_variant(variant.fields()) {
+        }
+        Data::Struct(Fields::Unit) => {
+            body.src("let _ = tokens;");
+        }
+        Data::Enum(variants) => {
+            let mut arms = Out::new();
+            for (ident, fields) in variants {
+                arms.src("Self::").tree(ident.clone());
+                let mut fields_out = Out::new();
+                let count = match fields {
                     Fields::Named(names) => {
-                        let patterns: Vec<_> = names
-                            .iter()
-                            .enumerate()
-                            .map(|(i, name)| {
-                                let binding = binding(i);
-                                quote! { #name: #binding, }
-                            })
-                            .collect();
-                        let fields = emit((0..names.len()).map(|i| parsyng::ToTokens::to_token_stream(&binding(i))));
-                        quote! { Self::#ident { #patterns } => { #fields } }
+                        let mut patterns = Out::new();
+                        for (index, name) in names.iter().enumerate() {
+                            patterns.tree(name.clone()).src(":").tree(binding(index)).src(",");
+                        }
+                        arms.group(Delimiter::Brace, patterns);
+                        names.len()
                     }
                     Fields::Unnamed(count) => {
-                        let patterns: Vec<_> = (0..count)
-                            .map(|i| {
-                                let binding = binding(i);
-                                quote! { #binding, }
-                            })
-                            .collect();
-                        let fields = emit((0..count).map(|i| parsyng::ToTokens::to_token_stream(&binding(i))));
-                        quote! { Self::#ident ( #patterns ) => { #fields } }
+                        let mut patterns = Out::new();
+                        for index in 0..*count {
+                            patterns.tree(binding(index)).src(",");
+                        }
+                        arms.group(Delimiter::Parenthesis, patterns);
+                        *count
                     }
-                    Fields::Unit => quote! { Self::#ident => {} },
+                    Fields::Unit => 0,
                 };
-                arms.push(arm);
-            }
-            quote! {
-                match self {
-                    #arms
+                for index in 0..count {
+                    let mut field = Out::new();
+                    field.tree(binding(index));
+                    emit(&mut fields_out, field);
                 }
+                arms.src("=>").group(Delimiter::Brace, fields_out);
             }
+            body.src("match self").group(Delimiter::Brace, arms);
         }
-    };
+    }
 
-    let ident = input.ident();
-    let (impl_generics, type_generics, where_clause) = input.split_generics_for_impl();
-    Ok(quote! {
-        #[automatically_derived]
-        impl #impl_generics parsyng::ToTokens for #ident #type_generics #where_clause {
-            fn to_tokens(&self, tokens: &mut parsyng::proc_macro::TokenStream) {
-                #body
-            }
-        }
-    })
+    let mut function = Out::new();
+    function
+        .src("fn to_tokens(&self, tokens: &mut parsyng::proc_macro::TokenStream)")
+        .group(Delimiter::Brace, body);
+    let generics = input.generics;
+    let mut out = Out::new();
+    out.src("#[automatically_derived] impl")
+        .tokens(generics.impl_generics)
+        .src("parsyng::ToTokens for")
+        .tree(input.ident)
+        .tokens(generics.type_generics)
+        .tokens(generics.where_clause)
+        .group(Delimiter::Brace, function);
+    Ok(out.finish())
 }

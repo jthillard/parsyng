@@ -2,7 +2,7 @@
 //! for the `impl<...>` header versus the `Type<...>` position.
 //!
 //! Neither view is meant to be parsed — they only exist to be interpolated
-//! with [`quote!`](crate::quote!), and are produced by
+//! with `quote!`, and are produced by
 //! [`Struct::split_generics_for_impl`](crate::ast::item::struct::Struct::split_generics_for_impl)
 //! or
 //! [`DeriveInput::split_generics_for_impl`](crate::ast::item::DeriveInput::split_generics_for_impl).
@@ -16,8 +16,8 @@ use crate::{
     proc_macro::Span,
 };
 
-/// Renders [`GenericParams`] for an `impl<...>` header: every parameter in
-/// full, including its bounds, lifetimes emitted first.
+/// Renders [`GenericParams`] for an `impl<...>` header: every parameter
+/// with its bounds but without its default, lifetimes emitted first.
 ///
 /// # Example
 ///
@@ -55,7 +55,7 @@ impl ToTokens for ImplGenerics<'_> {
             .iter()
             .filter(|generic| matches!(generic, GenericParam::Lifetime(_)))
             .for_each(|generic| {
-                generic.to_tokens(tokens);
+                generic.to_tokens_without_default(tokens);
                 Comma::new(Span::call_site()).to_tokens(tokens);
             });
         // and then other generics
@@ -64,7 +64,7 @@ impl ToTokens for ImplGenerics<'_> {
             .iter()
             .filter(|generic| !matches!(generic, GenericParam::Lifetime(_)))
             .for_each(|generic| {
-                generic.to_tokens(tokens);
+                generic.to_tokens_without_default(tokens);
                 Comma::new(Span::call_site()).to_tokens(tokens);
             });
         self.0.last_token.to_tokens(tokens);

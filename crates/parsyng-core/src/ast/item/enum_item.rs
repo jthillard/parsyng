@@ -22,7 +22,8 @@ use crate::{
 /// ... { ... }`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct EnumItem {
     enum_token: Enum,
     ident: Ident,
@@ -34,7 +35,8 @@ pub struct EnumItem {
 /// One variant of an [`EnumItem`], e.g. `Foo { a: i32 } = 1`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct EnumVariant {
     attributes: Vec<Attribute>,
     ident: Ident,
@@ -46,7 +48,8 @@ pub struct EnumVariant {
 /// unit (no fields).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum EnumVariantFields {
     /// `{ a: A, b: B }`.
     Named(Braced<Punctuated<EnumField, Comma>>),
@@ -59,7 +62,8 @@ pub enum EnumVariantFields {
 /// A named field inside an [`EnumVariantFields::Named`] variant.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/enumerations.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct EnumField {
     attributes: Vec<Attribute>,
     ident: Ident,

@@ -63,7 +63,8 @@ remaining gaps (slice, range and `box` patterns, and unstable syntax such as
 as regular parse errors. What it offers on top:
 
 - A single crate with no required dependency on `syn`/`quote`, built directly
-  on `proc_macro` (or, optionally, `proc_macro2`).
+  on `proc_macro` (or, optionally, `parsyng-fallback`, its own pure-Rust
+  implementation of the token types, for tests).
 - `quote!` implemented as a genuine procedural macro rather than a
   `macro_rules!`, which noticeably reduces the compile time of macro-heavy
   crates — see [`BENCH.md`](BENCH.md) for numbers against `syn`/`quote`,
@@ -79,12 +80,26 @@ Rust 1.95 or newer (edition 2024).
 
 ## Feature flags
 
-- **`proc-macro2`** — use the [`proc_macro2`](https://docs.rs/proc-macro2)
-  crate instead of the compiler's built-in `proc_macro` for every token type.
-  Required to call `quote!`, `parse_quote!` or any `Parse`/`ToTokens`
-  implementation outside of an actual macro invocation (for example, in unit
-  tests or a `build.rs`), since the real `proc_macro` crate panics when used
-  outside the compiler's macro expansion context.
+- **`parsing`** (default) — the `Parse` machinery, the AST, `parse_quote!`
+  and the helper attributes. Without it only `quote!`, `quote_spanned!`,
+  `format_ident!` and `ToTokens` remain.
+- **`full`** — the whole Rust grammar: expressions, statements, patterns,
+  function signatures, every item kind (`ast::item::Item`) and whole source
+  files (`ast::crate_source::Crate`). Without it, the AST covers what derive
+  macros need (types, paths, generics, `where` clauses, attributes,
+  visibility, literals, structs and enums, `DeriveInput`), which compiles
+  noticeably faster.
+- **`extra-traits`** — `Debug` implementations for the AST and combinator
+  types.
+- **`fallback`** — use `parsyng-fallback`, a pure-Rust implementation of the
+  token types, instead of the compiler's built-in `proc_macro`. Required to
+  call `quote!`, `parse_quote!` or any `Parse`/`ToTokens` implementation
+  outside of an actual macro invocation (for example, in unit tests or a
+  `build.rs`), since the real `proc_macro` crate panics when used outside the
+  compiler's macro expansion context. Unlike `proc_macro2`, it never forwards
+  to the compiler, which makes it much faster; a proc-macro crate built with
+  it (e.g. through a dev-dependency) still works, but its macros lose
+  spans.
 - **`debug-pretty`** — when a macro built with `#[parsyng::proc_macro]` & co.
   is annotated with the `debug` argument (e.g.
   `#[parsyng::proc_macro(debug)]`), pipe its generated output through

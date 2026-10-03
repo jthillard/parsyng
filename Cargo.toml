@@ -4,11 +4,13 @@ members = [
   "crates/parsyng-quote-macros",
   "crates/parsyng-proc-macros",
   "crates/parsyng-core",
+  "crates/parsyng-fallback",
 
   "benches/runtime",
   "benches/bench-comptime",
   "benches/bench-quote-comptime",
   "benches/bench-expansion",
+  "benches/bench-parse",
 
   "examples/simple-use",
   "examples/simple-use-macros",
@@ -34,10 +36,27 @@ keywords = ["macros", "proc", "quote"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [dependencies]
-parsyng-proc-macros = { version = "0.1.0", path = "./crates/parsyng-proc-macros" }
-parsyng-core = { version = "0.1.0", path = "./crates/parsyng-core" }
+parsyng-proc-macros = { version = "0.1.0", path = "./crates/parsyng-proc-macros", optional = true }
+parsyng-core = { version = "0.1.0", path = "./crates/parsyng-core", default-features = false }
+parsyng-quote-macros = { version = "0.1.0", path = "./crates/parsyng-quote-macros" }
 
 [features]
-proc-macro2 = ["parsyng-core/proc-macro2"]
+default = ["parsing"]
+# The `Parse` machinery, the Rust AST and the helper attributes. Disable
+# default features for a `quote!`-only dependency that compiles much faster.
+parsing = ["dep:parsyng-proc-macros", "parsyng-core/parsing"]
+# The whole Rust grammar (expressions, statements, patterns, every item kind,
+# whole source files). Without it, the AST covers what derive macros need.
+full = ["parsing", "parsyng-core/full"]
+# Use `parsyng-fallback`, a pure-Rust implementation of the token types,
+# instead of the compiler's `proc_macro`: for tests and other code running
+# outside of macro expansion. Enabling it in a proc-macro crate works, but
+# loses spans.
+fallback = ["parsyng-core/fallback"]
+# `Debug` implementations for the AST and combinator types.
+extra-traits = ["parsyng-core/extra-traits"]
 debug-pretty = ["parsyng-core/debug-pretty"]
 
+
+[package.metadata.docs.rs]
+all-features = true

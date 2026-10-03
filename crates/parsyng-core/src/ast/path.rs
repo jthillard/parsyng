@@ -3,12 +3,12 @@
 
 use crate::ToTokens;
 use crate::ast::delimiter::Parenthesized;
-use crate::ast::tokens::{Eq, RArrow};
+use crate::ast::tokens::{Eq, Minus, RArrow};
 
 use crate::combinator::Either;
+use crate::proc_macro::Delimiter;
 use crate::{
     ast::{
-        expression::{Expression, parse_generic_const_arg},
         item::Lifetime,
         tokens::{Comma, Gt, Lt, PathSep},
         r#type::Type,
@@ -16,7 +16,7 @@ use crate::{
     combinator::{Punctuated, StopOnError},
     error::{Diagnostics, Result},
     parse::{Parse, ParseBuffer, Peekable},
-    proc_macro::{Ident, Span},
+    proc_macro::{Group, Ident, Literal, Span},
 };
 
 /// A path with no generic arguments, e.g. `std::mem::swap` or
@@ -28,7 +28,8 @@ use crate::{
 /// [`TypePath`](crate::ast::type::TypePath) instead.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#simple-paths>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct SimplePath {
     start_token: Option<PathSep>,
     root: Ident,
@@ -38,11 +39,42 @@ pub struct SimplePath {
 impl Parse for SimplePath {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
-            start_token: input.try_parse::<PathSep>().ok(),
+            start_token: parse_leading_path_sep(input),
             root: input.parse()?,
-            paths: input.parse()?,
+            paths: parse_path_tail(input, Ident::parse),
         })
     }
+}
+
+/// Whether the next two tokens are `::`.
+pub(crate) fn is_path_sep(input: &ParseBuffer) -> bool {
+    input.nth_punct_char(0) == Some((':', true))
+        && input.nth_punct_char(1).is_some_and(|(ch, _)| ch == ':')
+}
+
+/// An optional leading `::`.
+pub(crate) fn parse_leading_path_sep(input: &mut ParseBuffer) -> Option<PathSep> {
+    if is_path_sep(input) {
+        input.parse().ok()
+    } else {
+        None
+    }
+}
+
+/// The `::segment` tail of a path: like `Vec<(PathSep, S)>`, but only
+/// attempts another segment when a `::` follows.
+pub(crate) fn parse_path_tail<S>(
+    input: &mut ParseBuffer,
+    segment: impl Fn(&mut ParseBuffer) -> crate::error::Result<S>,
+) -> Vec<(PathSep, S)> {
+    let mut paths = Vec::new();
+    while is_path_sep(input) {
+        match input.try_advance(|input| Ok((input.parse::<PathSep>()?, segment(input)?))) {
+            Ok(pair) => paths.push(pair),
+            Err(_) => break,
+        }
+    }
+    paths
 }
 
 impl SimplePath {
@@ -60,6 +92,7 @@ impl SimplePath {
     /// identifier pattern (`name`) apart from a longer path pattern
     /// (`Foo::Bar`).
     #[must_use]
+    #[cfg(feature = "full")]
     pub(crate) const fn as_single_ident(&self) -> Option<&Ident> {
         if self.start_token.is_none() && self.paths.is_empty() {
             Some(&self.root)
@@ -84,7 +117,8 @@ impl ToTokens for SimplePath {
 /// the Fn-trait-sugar form (`(A) -> B`, via [`TypePathFn`]).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypePathSegment {
     path_ident: Ident,
     args: Option<(Option<PathSep>, Either<GenericArgs, TypePathFn>)>,
@@ -102,6 +136,7 @@ impl TypePathSegment {
     /// sugar doesn't apply — so `a < b` stays a comparison.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+    #[cfg(feature = "full")]
     pub(crate) fn parse_expression(input: &mut ParseBuffer) -> Result<Self> {
         Ok(Self {
             path_ident: input.parse()?,
@@ -116,25 +151,28 @@ impl TypePathSegment {
 /// The `Fn`-trait sugar form of a path segment's arguments: `(A, B) -> C`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypePathFn {
-    inputs: Parenthesized<Option<TypePathFnInputs>>,
+    // Boxed: rare, and it would otherwise make every path segment much larger.
+    inputs: Parenthesized<Option<Box<TypePathFnInputs>>>,
     return_type: Option<(RArrow, Box<Type>)>,
 }
 
 /// The comma-separated argument types inside [`TypePathFn`]'s parentheses.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypePathFnInputs {
-    args: Punctuated<Comma, Type>,
-    trailing_comma: Option<Comma>,
+    args: Punctuated<Type, Comma>,
 }
 
 /// Angle-bracketed generic arguments on a path segment: `<A, 'a, B = C>`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct GenericArgs {
     start_token: Lt,
     generics: Punctuated<GenericArg, Comma, StopOnError>,
@@ -145,7 +183,8 @@ pub struct GenericArgs {
 /// type binding, or a const argument.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum GenericArg {
     /// A type argument.
     Type(Box<Type>),
@@ -165,7 +204,57 @@ pub enum GenericArg {
     /// apart syntactically.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
-    Const(Box<Expression>),
+    Const(ConstArg),
+}
+
+/// A const generic argument, or a const generic parameter's default: a
+/// `{ ... }` block (kept as raw tokens), a literal, a negated literal, or an
+/// identifier.
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/generics.html#const-generics>
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub enum ConstArg {
+    /// A `{ ... }` block.
+    Block(Group),
+    /// A literal, e.g. `3`.
+    Literal(Literal),
+    /// A negated literal, e.g. `-3`.
+    Negated(Minus, Literal),
+    /// A const generic parameter or constant, e.g. `N`.
+    Ident(Ident),
+}
+
+impl Parse for ConstArg {
+    fn parse(input: &mut ParseBuffer) -> Result<Self> {
+        if input.peek_delimiter() == Some(Delimiter::Brace) {
+            return Ok(Self::Block(input.parse()?));
+        }
+        if input.peek_literal().is_some() {
+            return Ok(Self::Literal(input.parse()?));
+        }
+        if input.peek_punct_char().is_some_and(|(ch, _)| ch == '-') {
+            return input.try_advance(|input| Ok(Self::Negated(input.parse()?, input.parse()?)));
+        }
+        if input.peek_ident_str().is_some() {
+            return Ok(Self::Ident(input.parse()?));
+        }
+        Err(Diagnostics::new_error_spanned(
+            "Expected a const generic argument",
+            input.span(),
+        ))
+    }
+}
+
+impl ToTokens for ConstArg {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        match self {
+            Self::Block(group) => group.to_tokens(tokens),
+            Self::Literal(literal) => literal.to_tokens(tokens),
+            Self::Negated(minus, literal) => (minus, literal).to_tokens(tokens),
+            Self::Ident(ident) => ident.to_tokens(tokens),
+        }
+    }
 }
 
 impl ToTokens for TypePathSegment {
@@ -177,13 +266,35 @@ impl ToTokens for TypePathSegment {
 
 impl Parse for TypePathSegment {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        Ok(Self {
-            path_ident: input.parse()?,
-            args: input
-                .try_parse::<(Option<Peekable<_>>, _)>()
+        let path_ident = input.parse()?;
+        // Generic arguments start with `<`/`(`, optionally after `::`: only
+        // attempt them when one is there (most segments have none).
+        let offset = if input.nth_punct_char(0) == Some((':', true))
+            && input.nth_punct_char(1).is_some_and(|(ch, _)| ch == ':')
+        {
+            2
+        } else {
+            0
+        };
+        let has_args = input
+            .nth_punct_char(offset)
+            .is_some_and(|(ch, _)| ch == '<')
+            || input.nth_delimiter(offset) == Some(Delimiter::Parenthesis);
+        let args = if has_args {
+            input
+                .try_advance(|input| {
+                    let sep = if offset == 2 {
+                        Some(input.parse()?)
+                    } else {
+                        None
+                    };
+                    Ok((sep, input.parse()?))
+                })
                 .ok()
-                .map(|(sep, generics)| (sep.map(Peekable::inner), generics)),
-        })
+        } else {
+            None
+        };
+        Ok(Self { path_ident, args })
     }
 }
 impl ToTokens for GenericArg {
@@ -192,21 +303,69 @@ impl ToTokens for GenericArg {
             Self::Type(ty) => ty.to_tokens(tokens),
             Self::Lifetime(lifetime) => lifetime.to_tokens(tokens),
             Self::Bindings(ident, generics, eq, ty) => (ident, generics, eq, ty).to_tokens(tokens),
-            Self::Const(expr) => expr.to_tokens(tokens),
+            Self::Const(arg) => arg.to_tokens(tokens),
         }
+    }
+}
+
+/// Whether the `Name<..>` at the cursor is followed by `=`, making it an
+/// associated-type binding (`Item<'a> = T`) rather than a type: a token
+/// scan, so that `Option<Box<..>>` isn't parsed once as a failed binding
+/// then again as a type at every nesting level.
+fn is_generic_binding(input: &ParseBuffer) -> bool {
+    let mut cursor = input.clone();
+    cursor.bump_token();
+    let mut depth = 0u32;
+    // Whether the previous token was a joint `-` (the `>` of `->` doesn't
+    // close anything).
+    let mut after_minus = false;
+    loop {
+        let punct = cursor.peek_punct_char();
+        if !cursor.bump_token() {
+            return false;
+        }
+        match punct {
+            Some(('<', _)) => depth += 1,
+            Some(('>', _)) if !after_minus => {
+                depth -= 1;
+                if depth == 0 {
+                    return cursor.peek_punct_char().is_some_and(|(ch, _)| ch == '=')
+                        && cursor.nth_punct_char(1) != Some(('=', false))
+                        && cursor.nth_punct_char(1) != Some(('=', true));
+                }
+            }
+            // A `;` or a block can't be inside generic arguments.
+            Some((';', _)) => return false,
+            _ => {}
+        }
+        after_minus = punct == Some(('-', true));
     }
 }
 
 impl Parse for GenericArg {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        if let Ok((ident, generics, eq, ty)) = input.try_parse::<(_, Option<Peekable<_>>, _, _)>() {
+        // `Name = Type` and `Name<..> = Type` bindings.
+        let may_be_binding = input.peek_ident_str().is_some()
+            && match input.nth_punct_char(1) {
+                Some(('=', joint)) => !joint,
+                Some(('<', _)) => is_generic_binding(input),
+                _ => false,
+            };
+        if may_be_binding
+            && let Ok((ident, generics, eq, ty)) =
+                input.try_parse::<(_, Option<Peekable<_>>, _, _)>()
+        {
             Ok(Self::Bindings(ident, generics.map(Peekable::inner), eq, ty))
+        } else if input.peek_punct_char().is_some_and(|(ch, _)| ch == '\'')
+            && let Ok(lifetime) = input.try_parse()
+        {
+            Ok(Self::Lifetime(lifetime))
         } else if let Ok(ty) = input.try_parse() {
             Ok(Self::Type(Box::new(ty)))
         } else if let Ok(lifetime) = input.try_parse() {
             Ok(Self::Lifetime(lifetime))
-        } else if let Ok(expr) = input.try_advance(parse_generic_const_arg) {
-            Ok(Self::Const(Box::new(expr)))
+        } else if let Ok(arg) = input.try_parse() {
+            Ok(Self::Const(arg))
         } else {
             Err(Diagnostics::new_error_spanned(
                 "Expected a generic argument",
@@ -251,7 +410,6 @@ impl Parse for TypePathFn {
 impl ToTokens for TypePathFnInputs {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         self.args.to_tokens(tokens);
-        self.trailing_comma.to_tokens(tokens);
     }
 }
 
@@ -259,7 +417,6 @@ impl Parse for TypePathFnInputs {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
             args: input.parse()?,
-            trailing_comma: input.parse()?,
         })
     }
 }
@@ -277,5 +434,15 @@ mod tests {
         check::<TypePathSegment>(quote! {
             Iterator<Item = &Attribute>
         });
+    }
+
+    #[test]
+    fn test_fn_sugar() {
+        check::<Type>(quote! { Box<dyn Fn(u8)> });
+        check::<Type>(quote! { Box<dyn Fn(T) -> T + Send> });
+        check::<Type>(quote! { Box<dyn FnMut(u8, u16,) -> u8> });
+        check::<Type>(quote! { impl Fn(u8) });
+        check::<Type>(quote! { Box<dyn for<'a> Fn(&'a u8)> });
+        check::<Type>(quote! { F<Fn()> });
     }
 }

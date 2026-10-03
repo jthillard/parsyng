@@ -16,7 +16,8 @@ use crate::{
 /// [`Item`] (for `#[proc_macro_attribute]` macros applied to one item).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/crates-and-source-files.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Crate {
     inner_attributes: Vec<crate::ast::attributes::Attribute>,
     items: Vec<Item>,

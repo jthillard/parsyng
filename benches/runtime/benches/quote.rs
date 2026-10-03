@@ -1,7 +1,7 @@
 //! Runtime cost of quasi-quoting: `quote` vs `parsyng` vs `unsynn` vs `moxy`.
 //!
-//! Each library builds its own native token stream (proc-macro2 for quote,
-//! unsynn and parsyng's `proc-macro2` mode, moxy's own `TokenStream`). Each
+//! Each library builds its own native token stream (proc-macro2 for quote and
+//! unsynn, `parsyng-fallback` for parsyng, moxy's own `TokenStream`). Each
 //! library lives in its own module because their `quote!` expansions need
 //! their own `ToTokens` trait in scope.
 
@@ -60,8 +60,7 @@ mod parsyng_crate {
     use criterion::BenchmarkGroup;
     use criterion::measurement::WallTime;
     use parsyng_bench_runtime::{big_template, field_names, small_template};
-    use parsyng_core as parsyng;
-    use parsyng_core::{format_ident, quote};
+    use parsyng::{format_ident, quote};
 
     pub fn empty(g: &mut BenchmarkGroup<'_, WallTime>) {
         g.bench_function("parsyng", |b| b.iter(|| black_box(quote! {})));

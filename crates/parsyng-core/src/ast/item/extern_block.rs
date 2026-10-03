@@ -13,7 +13,8 @@ use crate::{
 /// "C" { ... }` (the body is kept as raw, unparsed tokens).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/external-blocks.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ExternBlockItem {
     extern_token: Extern,
     abi: Option<Literal>,

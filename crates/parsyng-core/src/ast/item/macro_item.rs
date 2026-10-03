@@ -20,7 +20,8 @@ use crate::{
 /// [`ItemMacroRules`](crate::ast::item::ItemMacroRules) for that.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/macros-by-example.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MacroRulesItem {
     macro_rules_ident: Ident,
     bang: Not,
@@ -35,7 +36,8 @@ pub struct MacroRulesItem {
 /// [`ItemMacro`](crate::ast::item::ItemMacro) for that.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/macros-by-example.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MacroItem {
     macro_token: Macro,
     name: Ident,
@@ -50,7 +52,8 @@ pub struct MacroItem {
 /// [`ImplItemKind::Macro`](crate::ast::item::impl_item::ImplItemKind::Macro).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct MacroInvocationItem {
     path: SimplePath,
     bang: Not,
@@ -68,14 +71,12 @@ impl MacroInvocationItem {
 
 impl Parse for MacroRulesItem {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        let macro_rules_ident: Ident = input.parse()?;
-        #[allow(clippy::cmp_owned)]
-        if macro_rules_ident.to_string() != "macro_rules" {
+        let Some(macro_rules_ident) = input.ident_str_and(|text| text == "macro_rules") else {
             return Err(Diagnostics::new_error_spanned(
                 "Expected `macro_rules`",
-                macro_rules_ident.span(),
+                input.span(),
             ));
-        }
+        };
         Ok(Self {
             macro_rules_ident,
             bang: input.parse()?,

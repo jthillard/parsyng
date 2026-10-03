@@ -1,3 +1,4 @@
+#![cfg(feature = "full")]
 use std::fs;
 
 use parsyng_core::ast::crate_source::Crate;

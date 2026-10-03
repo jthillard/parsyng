@@ -16,6 +16,8 @@
     missing_docs
     // rustdoc::missing_doc_code_examples,
 )]
+// The docs link to the whole grammar, part of which is behind `full`.
+#![cfg_attr(not(feature = "full"), allow(rustdoc::broken_intra_doc_links))]
 #![allow(
     clippy::option_if_let_else,
     clippy::same_functions_in_if_condition,
@@ -23,19 +25,25 @@
 )]
 
 // Put proc_macro in a private module to avoid being able to use `proc_macro::...` directly in this crate
-// This way the `proc-macro2` feature will work out of the box.
+// This way the `fallback` feature works out of the box.
+#[cfg(not(feature = "fallback"))]
 mod sealed {
     pub extern crate proc_macro;
 }
-#[cfg(not(feature = "proc-macro2"))]
+#[cfg(not(feature = "fallback"))]
 pub use sealed::proc_macro;
 
-#[cfg(feature = "proc-macro2")]
-pub use proc_macro2 as proc_macro;
+/// The token types: the compiler's `proc_macro`, or `parsyng_fallback` with
+/// the `fallback` feature.
+#[cfg(feature = "fallback")]
+pub use parsyng_fallback as proc_macro;
 
+#[cfg(feature = "parsing")]
 pub mod ast;
+#[cfg(feature = "parsing")]
 pub mod combinator;
 pub mod error;
+#[cfg(feature = "parsing")]
 pub mod parse;
 /// Helpers for proc-macro specific token manipulation.
 pub mod proc_macro_ext;
@@ -43,34 +51,8 @@ pub mod proc_macro_ext;
 #[doc(hidden)]
 pub mod quote;
 
+#[cfg(feature = "parsing")]
 pub use parse::Parse;
-
-pub use parsyng_quote_macros::{quote, quote_spanned};
-
-/// Build a value of any [`Parse`] type from an almost-literal snippet of
-/// Rust syntax, combining [`quote!`] and [`parse::ParseBuffer::parse`] in one
-/// step.
-///
-/// Equivalent to `syn::parse_quote!`: the input accepts the same
-/// `#interpolation` syntax as [`quote!`], the resulting tokens are parsed as
-/// `T` (inferred from context), and parsing failures (including leftover
-/// tokens) panic rather than returning a `Result` — use this for syntax you
-/// know must be valid (e.g.
-/// building a fixed piece of generated code), not for parsing arbitrary
-/// macro input.
-///
-/// ```ignore
-/// use parsyng::ast::r#type::Type;
-/// use parsyng::parse_quote;
-///
-/// let ty: Type = parse_quote!(Vec<u8>);
-/// ```
-#[macro_export]
-macro_rules! parse_quote {
-    ($($t:tt)*) => {{
-        $crate::parse::parse_all($crate::quote! { $($t)* }).expect("`parse_quote!` failed to parse its input")
-    }};
-}
 
 /// Build an [`Ident`](crate::proc_macro::Ident) using `format!`-style syntax,
 /// spanned at [`Span::call_site`](crate::proc_macro::Span::call_site).
@@ -92,7 +74,7 @@ macro_rules! format_ident {
 ///
 /// This is the counterpart to [`Parse`]: every [`ast`] node, and
 /// every combinator it is built from, implements `ToTokens` so it can be fed
-/// straight into [`quote!`]'s `#interpolation` or converted to a stand-alone
+/// straight into `quote!`'s `#interpolation` or converted to a stand-alone
 /// token stream with [`to_token_stream`](Self::to_token_stream). The
 /// `#[derive(ToTokens)]` macro (exported from `parsyng-proc-macros`, and
 /// re-exported at the top of the `parsyng` facade crate) implements it
@@ -111,13 +93,14 @@ pub trait ToTokens {
 
 /// The index of a tuple field, turning into an *unsuffixed* integer literal.
 ///
-/// Interpolating a plain `usize` in [`quote!`] produces a suffixed literal
+/// Interpolating a plain `usize` in `quote!` produces a suffixed literal
 /// (`0usize`), which is not a valid field name: use `Index` to generate
 /// `self.0`-style accesses instead.
 ///
 /// ```no_run
 /// # use parsyng_core as parsyng;
-/// use parsyng::{Index, quote};
+/// use parsyng::Index;
+/// # use parsyng_quote_macros::quote;
 ///
 /// let mut fields = (0..3).map(Index::from);
 /// let sum = quote! { 0 #(+ self.#fields)* }; // `0 + self.0 + self.1 + self.2`

@@ -29,7 +29,8 @@ use crate::{
 /// `Cons` when you want named fields instead of positional ones, or need
 /// exactly 5. Unused trailing type parameters default to [`Nothing`], which
 /// parses and prints nothing, so `Cons<A, B>` is a valid 2-element sequence.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Cons<A, B, C = Nothing, D = Nothing, E = Nothing> {
     /// The first value.
     pub first: A,
@@ -92,6 +93,9 @@ impl<A: Parse, B: Parse, C: Parse, D: Parse> Parse for (A, B, C, D) {
 /// than propagating an error.
 impl<T: Peek> Parse for Option<T> {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
+        if !T::peek(input) {
+            return Ok(None);
+        }
         Ok(input.parse().ok())
     }
 }
@@ -103,7 +107,8 @@ impl<T: Peek> Peek for Option<T> {}
 ///
 /// Requires `P: Parse` (not just [`Peek`]) since it doesn't need to look
 /// ahead before committing to a separator.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Greedy;
 /// [`Punctuated`] error strategy: stop, without error, as soon as the next
 /// element or separator doesn't parse, treating the tokens parsed so far as
@@ -111,7 +116,8 @@ pub struct Greedy;
 ///
 /// Requires `P: Peek` so that checking for "is there another separator"
 /// never consumes tokens on failure.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StopOnError;
 
 /// A `T`-then-`P`-then-`T`-then-`P`-...-then-`T` sequence with an optional
@@ -135,7 +141,8 @@ pub struct StopOnError;
 /// assert_eq!(list.len(), 1);
 /// assert!(list.trailing().is_some());
 /// ```
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Punctuated<T, P, OnError = Greedy> {
     content: Vec<(T, P)>,
     last: Option<T>,
@@ -144,7 +151,8 @@ pub struct Punctuated<T, P, OnError = Greedy> {
 
 /// By-value iterator over a [`Punctuated`]'s elements, produced by its
 /// [`IntoIterator`] implementation.
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PunctuatedIntoIter<T, P> {
     content: IntoIter<(T, P)>,
     last: Option<T>,
@@ -176,7 +184,8 @@ impl<T, P> Iterator for PunctuatedIntoIter<T, P> {
 
 /// Borrowing iterator over a [`Punctuated`]'s elements, produced by
 /// [`Punctuated::iter`].
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PunctuatedIter<'a, T, P> {
     content: Iter<'a, (T, P)>,
     last: Option<&'a T>,
@@ -184,7 +193,8 @@ pub struct PunctuatedIter<'a, T, P> {
 
 /// Mutably-borrowing iterator over a [`Punctuated`]'s elements, produced by
 /// [`Punctuated::iter_mut`].
-#[derive(Default, Debug)]
+#[derive(Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PunctuatedIterMut<'a, T, P> {
     content: IterMut<'a, (T, P)>,
     last: Option<&'a mut T>,
@@ -300,7 +310,9 @@ impl<T: Parse, P: Peek> Parse for Punctuated<T, P, StopOnError> {
         let mut content = Vec::new();
         let mut last = None;
         while let Ok(element) = input.try_advance(ParseBuffer::parse::<T>) {
-            if let Ok(punct) = input.peek_parse() {
+            if P::peek(input)
+                && let Ok(punct) = input.peek_parse()
+            {
                 content.push((element, punct));
             } else {
                 last = Some(element);
@@ -412,7 +424,8 @@ impl<T: Parse> Parse for GreedyVec<T> {
 /// let value: Either<u32, Ident> = input.parse().unwrap();
 /// assert!(matches!(value, Either::First(42)));
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Either<A, B, C = Invalid, D = Invalid, E = Invalid> {
     /// The first alternative matched.
     First(A),

@@ -18,7 +18,8 @@ use crate::proc_macro::Ident;
 /// [`ItemConst`](crate::ast::item::ItemConst) for that.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/constant-items.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ConstantItem {
     const_token: tokens::Const,
     ident: Ident,

@@ -10,7 +10,7 @@ use crate::{
         path::SimplePath,
         tokens::{Crate, In, Pub, SelfValue, Super},
     },
-    parse::{Parse, ParseBuffer},
+    parse::Parse,
     proc_macro::Delimiter,
 };
 
@@ -22,7 +22,8 @@ use crate::{
 /// [`Private`](Self::Private) variant, not an error.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Visibility {
     /// `pub`.
     Public(Pub),
@@ -51,16 +52,13 @@ impl Parse for Visibility {
         let Ok(pub_token) = input.peek_parse::<Pub>() else {
             return Ok(Self::Private);
         };
-        let Some(group) = input.peek_group() else {
-            return Ok(Self::Public(pub_token));
-        };
-        if group.delimiter() != Delimiter::Parenthesis {
-            return Ok(Self::Public(pub_token));
-        }
         // `pub(crate)`, `pub(self)`, `pub(super)` or `pub(in path)`. Any
         // other parenthesized group is not part of the visibility, e.g. the
         // tuple type in `struct S(pub (u8, u8));`.
-        let mut group_input = ParseBuffer::new(group.stream());
+        let mut fork = input.clone();
+        let Some((group, mut group_input)) = fork.delimited(Delimiter::Parenthesis) else {
+            return Ok(Self::Public(pub_token));
+        };
         let visibility = if let Ok(crate_token) = group_input.peek_parse::<Crate>() {
             Restricted::Crate(crate_token)
         } else if let Ok(self_token) = group_input.peek_parse::<SelfValue>() {
@@ -75,9 +73,7 @@ impl Parse for Visibility {
         if !group_input.is_empty() {
             return Ok(Self::Public(pub_token));
         }
-        let Some(group) = input.group() else {
-            unreachable!("a group was just peeked")
-        };
+        *input = fork;
         Ok(match visibility {
             Restricted::Crate(token) => Self::Crate(pub_token, Parenthesized::new(group, token)),
             Restricted::SelfVis(token) => {

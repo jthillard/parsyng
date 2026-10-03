@@ -14,4 +14,4 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dependencies]
-parsyng = { path = "../../", features = ["debug-pretty"] }
+parsyng = { path = "../../", features = ["debug-pretty", "full"] }

@@ -18,7 +18,8 @@ use crate::{
 /// One member inside an `impl { ... }` block.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ImplItem {
     attributes: Vec<crate::ast::attributes::Attribute>,
     kind: ImplItemKind,
@@ -31,7 +32,8 @@ pub struct ImplItem {
 /// [`TraitItemKind::Function`](crate::ast::item::trait_item::TraitItemKind::Function).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum ImplItemKind {
     /// An associated type.
     ///

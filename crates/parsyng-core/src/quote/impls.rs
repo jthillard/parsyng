@@ -87,13 +87,6 @@ proc_macro_impls! {
     crate::proc_macro::TokenStream,
 }
 
-#[cfg(feature = "proc-macro2")]
-impl ToTokens for crate::sealed::proc_macro::TokenStream {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(core::iter::once::<TokenStream>(self.clone().into()));
-    }
-}
-
 impl ToTokens for crate::proc_macro::token_stream::IntoIter {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(self.clone());

@@ -21,7 +21,8 @@ use crate::{
 /// Foo<T>: Bound where ... { ... }`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/traits.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TraitItem {
     unsafety: Option<Unsafe>,
     auto_token: Option<Auto>,
@@ -34,7 +35,8 @@ pub struct TraitItem {
 }
 
 /// One member inside a [`TraitItem`]'s body.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TraitItemMember {
     attributes: Vec<crate::ast::attributes::Attribute>,
     kind: TraitItemKind,
@@ -44,7 +46,8 @@ pub struct TraitItemMember {
 /// method (with an optional default body).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum TraitItemKind {
     /// An associated type.
     ///
@@ -63,7 +66,8 @@ pub enum TraitItemKind {
 /// A trait method declaration, with an optional default body.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TraitFunction {
     signature: FnSignature,
     body: TraitFunctionBody,
@@ -73,7 +77,8 @@ pub struct TraitFunction {
 /// raw, unparsed [`TokenStream`]), or a bare `;` (no default).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum TraitFunctionBody {
     /// `{ ... }`.
     Block(Braced<TokenStream>),

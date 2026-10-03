@@ -1,33 +1,25 @@
-use parsyng_core as parsyng;
+use proc_macro::{Delimiter, TokenStream};
 
-use parsyng_core::quote;
-use parsyng_core::{error, parse, proc_macro::TokenStream};
+use crate::helper_common::{MacroFn, parse_all, parse_debug, return_error};
+use crate::tokens::{Cursor, Out, Result};
 
-use crate::helper_common::{MacroFn, parse_debug};
-
-pub fn proc_macro(args: TokenStream, input: TokenStream) -> error::Result<TokenStream> {
+pub fn proc_macro(args: TokenStream, input: TokenStream) -> Result<TokenStream> {
     let function = MacroFn::parse(input, 1, "`#[parsyng::proc_macro]` function")?;
-    let dbg = function.debug_call(parse_debug(&mut parse::ParseBuffer::new(args))?);
+    let debug = parse_debug(&mut Cursor::new(args))?;
 
-    let attributes = &function.attributes;
-    let macro_ident = function.signature.ident();
-    let inner_ident = &function.inner_ident;
-    let in_type = &function.param_types[0];
-    let out_type = &function.out_type;
+    // `match <parse> { Ok(ok) => <inner>(ok), Err(err) => return <err> }`
+    let mut arms = Out::new();
+    arms.src("Ok(ok) =>")
+        .tree(function.inner_ident.clone())
+        .src("(ok), Err(err) =>")
+        .src(&return_error("err"));
+    let mut parse = Out::new();
+    parse
+        .src("match")
+        .tokens(parse_all(&function.param_types[0], "input").finish())
+        .group(Delimiter::Brace, arms);
 
-    Ok(quote! {
-        #attributes
-        #[proc_macro]
-        pub fn #macro_ident(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-            let result = match parsyng::parse::parse_all::<#in_type>(input.into()) {
-                Ok(ok) => #inner_ident(ok),
-                Err(err) => return <parsyng::error::Diagnostics as parsyng::ToTokens>::to_token_stream(&err).into()
-            };
-            let output = <#out_type as parsyng::ToTokens>::to_token_stream(&result);
-            #dbg
-            output.into()
-        }
-
-        #{ function.inner_function() }
-    })
+    let mut kind = Out::new();
+    kind.src("proc_macro");
+    Ok(function.expand(kind, "(input: proc_macro::TokenStream)", parse, debug))
 }

@@ -18,7 +18,8 @@ use crate::{
 /// than parsed into a structured "path + arguments" representation.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/attributes.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Attribute {
     pound: Pound,
     bang: Option<Not>,
@@ -63,17 +64,19 @@ impl ToTokens for Attribute {
 /// an inner attribute, which is rejected here and left for the caller.
 pub fn parse_outer_attributes(input: &mut ParseBuffer) -> Vec<Attribute> {
     let mut attributes = Vec::new();
-    while let Ok(attribute) = input.try_advance(|input| {
-        let attribute: Attribute = input.parse()?;
-        if attribute.is_inner() {
-            Err(Diagnostics::new_error_spanned(
-                "Expected outer attribute",
-                attribute.span(),
-            ))
-        } else {
-            Ok(attribute)
-        }
-    }) {
+    while input.peek_punct_char().is_some_and(|(ch, _)| ch == '#')
+        && let Ok(attribute) = input.try_advance(|input| {
+            let attribute: Attribute = input.parse()?;
+            if attribute.is_inner() {
+                Err(Diagnostics::new_error_spanned(
+                    "Expected outer attribute",
+                    attribute.span(),
+                ))
+            } else {
+                Ok(attribute)
+            }
+        })
+    {
         attributes.push(attribute);
     }
     attributes
@@ -85,17 +88,19 @@ pub fn parse_outer_attributes(input: &mut ParseBuffer) -> Vec<Attribute> {
 /// an outer attribute, which is rejected here and left for the caller.
 pub fn parse_inner_attributes(input: &mut ParseBuffer) -> Vec<Attribute> {
     let mut attributes = Vec::new();
-    while let Ok(attribute) = input.try_advance(|input| {
-        let attribute: Attribute = input.parse()?;
-        if attribute.is_inner() {
-            Ok(attribute)
-        } else {
-            Err(Diagnostics::new_error_spanned(
-                "Expected inner attribute",
-                attribute.span(),
-            ))
-        }
-    }) {
+    while input.peek_punct_char().is_some_and(|(ch, _)| ch == '#')
+        && let Ok(attribute) = input.try_advance(|input| {
+            let attribute: Attribute = input.parse()?;
+            if attribute.is_inner() {
+                Ok(attribute)
+            } else {
+                Err(Diagnostics::new_error_spanned(
+                    "Expected inner attribute",
+                    attribute.span(),
+                ))
+            }
+        })
+    {
         attributes.push(attribute);
     }
     attributes

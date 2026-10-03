@@ -77,3 +77,18 @@ pub fn heap_size(input: Input) -> Input {
         }
     })
 }
+
+#[cfg(feature = "parse-bench")]
+pub fn parse_file(input: Input) -> Input {
+    let tokens: TokenStream = input.into();
+    match moxy::parse!(tokens as moxy::ast::File) {
+        Ok(file) => {
+            core::hint::black_box(file);
+            Input::new()
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            output(&template! { compile_error!({{ msg }}); })
+        }
+    }
+}

@@ -42,16 +42,6 @@ use crate::{
     proc_macro::{Ident, Punct, Spacing, Span},
 };
 
-fn parse_keyword(input: &mut ParseBuffer, keyword: &str) -> Result<Ident> {
-    let span = input.span();
-    let mk_error = || Diagnostics::new_error_spanned(format!("Expected keyword `{keyword}`"), span);
-
-    #[allow(clippy::cmp_owned)]
-    input
-        .ident_and(|ident| ident.to_string() == keyword)
-        .ok_or_else(mk_error)
-}
-
 macro_rules! make_tokens {
     (@keywords $($keyword:ident $i:literal => $keyword_name:ident)* @puncts $($punct:tt $($lit:literal),* => $punct_name:ident #[doc = $punct_usage:literal])*) => {
         /// Names a keyword or punctuation token type by its surface syntax. See the [module docs](crate::ast::tokens)
@@ -110,7 +100,17 @@ macro_rules! make_puncts {
 }
 macro_rules! make_keywords {
     ($($keyword:tt $i:literal => $name:ident)*) => {
-        const KEYWORDS: [&'static str; 53] = [$(stringify!($keyword)),*];
+        /// `"Expected keyword `...`"`, indexed like [`RustKeyword`]'s `K`.
+        const KEYWORD_ERRORS: [&'static str; 53] =
+            [$(concat!("Expected keyword `", stringify!($keyword), "`")),*];
+
+        /// The index of the keyword `text` spells, or [`NOT_A_KEYWORD`].
+        pub(crate) fn keyword_index(text: &str) -> u8 {
+            match text {
+                $(stringify!($keyword) => $i,)*
+                _ => NOT_A_KEYWORD,
+            }
+        }
 
         $(
             #[doc = concat!("`", stringify!($keyword), "` keyword")]
@@ -239,17 +239,28 @@ make_tokens! {
 /// keyword's alias, or spell it with [`Token!`](crate::Token) (`Token![struct]`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/keywords.html>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct RustKeyword<const K: u8> {
     ident: Ident,
 }
 
+/// Returned by `keyword_index` for identifiers that are not keywords.
+pub(crate) const NOT_A_KEYWORD: u8 = u8::MAX;
+
 impl<const K: u8> Parse for RustKeyword<K> {
+    #[inline]
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        Ok(Self {
-            ident: parse_keyword(input, KEYWORDS[K as usize])?,
-        })
+        match input.keyword(K) {
+            Some(ident) => Ok(Self { ident }),
+            None => Err(keyword_error(input, K)),
+        }
     }
+}
+
+#[cold]
+fn keyword_error(input: &ParseBuffer, keyword: u8) -> Diagnostics {
+    Diagnostics::new_error_spanned(KEYWORD_ERRORS[keyword as usize], input.span())
 }
 impl<const K: u8> RustKeyword<K> {
     /// This keyword's span.
@@ -259,7 +270,12 @@ impl<const K: u8> RustKeyword<K> {
     }
 }
 
-impl<const K: u8> Peek for RustKeyword<K> {}
+impl<const K: u8> Peek for RustKeyword<K> {
+    #[inline]
+    fn peek(input: &ParseBuffer) -> bool {
+        input.peek_keyword() == Some(K)
+    }
+}
 impl<const K: u8> ToTokens for RustKeyword<K> {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         tokens.extend(Some(self.ident.clone()));
@@ -274,7 +290,8 @@ impl<const K: u8> ToTokens for RustKeyword<K> {
 /// (`Token![+]`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct RustPunct1<const A: char>([Punct; 1]);
 
 /// The generic type backing every 2-character punctuation alias, such as
@@ -285,7 +302,8 @@ pub struct RustPunct1<const A: char>([Punct; 1]);
 /// (`Token![::]`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct RustPunct2<const A: char, const B: char>([Punct; 2]);
 
 /// The generic type backing every 3-character punctuation alias, such as
@@ -296,7 +314,8 @@ pub struct RustPunct2<const A: char, const B: char>([Punct; 2]);
 /// (`Token![..=]`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct RustPunct3<const A: char, const B: char, const C: char>([Punct; 3]);
 
 impl<const A: char> RustPunct1<A> {
@@ -356,18 +375,27 @@ impl<const A: char, const B: char, const C: char> RustPunct3<A, B, C> {
 }
 
 impl<const A: char> Parse for RustPunct1<A> {
+    #[inline]
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        let error_span: Span = input.span();
-        if let Some(punct1) = input.punct_and(|punct| punct.as_char() == A) {
-            return Ok(Self([punct1]));
+        match input.punct_char_and(|ch, _| ch == A) {
+            Some(punct) => Ok(Self([punct])),
+            None => Err(punct_error(input, &[A])),
         }
-        Err(Diagnostics::new_error_spanned(
-            format!("Expected token `{A}`"),
-            error_span,
-        ))
     }
 }
-impl<const A: char> Peek for RustPunct1<A> {}
+
+/// `"Expected token `...`"`, only formatted if the error is ever displayed.
+#[cold]
+fn punct_error(input: &ParseBuffer, chars: &[char]) -> Diagnostics {
+    Diagnostics::expected_token(chars, input.span())
+}
+
+impl<const A: char> Peek for RustPunct1<A> {
+    #[inline]
+    fn peek(input: &ParseBuffer) -> bool {
+        input.peek_punct_char().is_some_and(|(ch, _)| ch == A)
+    }
+}
 
 impl<const A: char> ToTokens for RustPunct1<A> {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
@@ -375,20 +403,22 @@ impl<const A: char> ToTokens for RustPunct1<A> {
     }
 }
 impl<const A: char, const B: char> Parse for RustPunct2<A, B> {
+    #[inline]
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        let error_span: Span = input.span();
-        if let Some(punct1) = input.punct()
-            && punct1.as_char() == A
-            && punct1.spacing() == Spacing::Joint
-            && let Some(punct2) = input.punct()
-            && punct2.as_char() == B
+        if input.nth_punct_char(0) == Some((A, true))
+            && input.nth_punct_char(1).is_some_and(|(ch, _)| ch == B)
+            && let (Some(punct1), Some(punct2)) = (input.punct(), input.punct())
         {
             return Ok(Self([punct1, punct2]));
         }
-        Err(Diagnostics::new_error_spanned(
-            format!("Expected token `{A}{B}`"),
-            error_span,
-        ))
+        Err(punct_error(input, &[A, B]))
+    }
+}
+impl<const A: char, const B: char> Peek for RustPunct2<A, B> {
+    #[inline]
+    fn peek(input: &ParseBuffer) -> bool {
+        input.nth_punct_char(0) == Some((A, true))
+            && input.nth_punct_char(1).is_some_and(|(ch, _)| ch == B)
     }
 }
 
@@ -400,23 +430,25 @@ impl<const A: char, const B: char> ToTokens for RustPunct2<A, B> {
 }
 
 impl<const A: char, const B: char, const C: char> Parse for RustPunct3<A, B, C> {
+    #[inline]
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        let error_span: Span = input.span();
-        if let Some(punct1) = input.punct()
-            && punct1.as_char() == A
-            && punct1.spacing() == Spacing::Joint
-            && let Some(punct2) = input.punct()
-            && punct2.as_char() == B
-            && punct2.spacing() == Spacing::Joint
-            && let Some(punct3) = input.punct()
-            && punct3.as_char() == C
+        if input.nth_punct_char(0) == Some((A, true))
+            && input.nth_punct_char(1) == Some((B, true))
+            && input.nth_punct_char(2).is_some_and(|(ch, _)| ch == C)
+            && let (Some(punct1), Some(punct2), Some(punct3)) =
+                (input.punct(), input.punct(), input.punct())
         {
             return Ok(Self([punct1, punct2, punct3]));
         }
-        Err(Diagnostics::new_error_spanned(
-            format!("Expected token `{A}{B}{C}`"),
-            error_span,
-        ))
+        Err(punct_error(input, &[A, B, C]))
+    }
+}
+impl<const A: char, const B: char, const C: char> Peek for RustPunct3<A, B, C> {
+    #[inline]
+    fn peek(input: &ParseBuffer) -> bool {
+        input.nth_punct_char(0) == Some((A, true))
+            && input.nth_punct_char(1) == Some((B, true))
+            && input.nth_punct_char(2).is_some_and(|(ch, _)| ch == C)
     }
 }
 

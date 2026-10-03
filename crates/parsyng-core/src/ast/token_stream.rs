@@ -53,17 +53,11 @@ impl Parse for Punct {
     }
 }
 
-#[cfg(feature = "proc-macro2")]
-impl Parse for crate::sealed::proc_macro::TokenStream {
-    fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        Ok(input.collect::<TokenStream>().into())
-    }
-}
-
 /// Captures every token up to (but not including) the next top-level `;`,
 /// without parsing them. Used e.g. for a `const`/`static` item's
 /// default-value expression.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TokenStreamUntilSemicolon {
     tokens: TokenStream,
 }
@@ -98,7 +92,8 @@ impl ToTokens for TokenStreamUntilSemicolon {
 /// Captures every token up to (but not including) the next top-level `,`,
 /// without parsing them. Used e.g. for an enum variant's discriminant
 /// expression.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TokenStreamUntilComma {
     tokens: TokenStream,
 }
@@ -132,7 +127,8 @@ impl ToTokens for TokenStreamUntilComma {
 
 /// Captures every token up to (but not including) the next top-level `,` or
 /// `>`, without parsing them.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TokenStreamUntilCommaOrGt {
     tokens: TokenStream,
 }

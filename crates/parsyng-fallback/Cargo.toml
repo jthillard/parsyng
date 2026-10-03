@@ -1,0 +1,20 @@
+[package]
+name = "parsyng-fallback"
+description = "A pure-Rust implementation of the `proc_macro` token types, used by `parsyng` outside of macro expansion"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/supersurviveur/parsyng"
+documentation = "https://docs.rs/parsyng-fallback"
+rust-version = "1.95"
+include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
+keywords = ["macros", "proc", "tokens"]
+categories = ["development-tools::procedural-macro-helpers"]
+
+[dependencies]
+unicode-ident = "1"
+
+[dev-dependencies]
+# Only used as an oracle for the lexer tests.
+proc-macro2 = "1"

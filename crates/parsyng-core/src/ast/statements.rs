@@ -25,7 +25,8 @@ use crate::{
 /// the block's value.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/statements.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Statement {
     /// An empty `;` statement.
     Semicolon(Semicolon),
@@ -57,7 +58,8 @@ pub enum Statement {
 /// more permissively than rustc).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/statements.html#let-statements>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LetStatement {
     let_token: Let,
     pat: Pattern,

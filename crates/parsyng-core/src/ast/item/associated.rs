@@ -20,7 +20,8 @@ use crate::{
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/type-aliases.html> and
 /// <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeAlias {
     type_token: tokens::Type,
     ident: Ident,
@@ -36,7 +37,8 @@ pub struct TypeAlias {
 /// block.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum AssociatedAlias {
     /// An associated `type`.
     ///

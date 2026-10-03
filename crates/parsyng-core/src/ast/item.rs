@@ -18,47 +18,55 @@ use crate::{
     proc_macro::{Delimiter, Span, TokenStream},
 };
 
+#[cfg(feature = "full")]
+use crate::ast::item::{
+    associated::TypeAlias, constant::ConstantItem, extern_block::ExternBlockItem,
+    extern_crate::ExternCrateItem, function::FunctionItem, implementation::Implementation,
+    module::ModItem, static_item::StaticItem, trait_item::TraitItem, r#use::UseItem,
+};
 use crate::{
     ast::{
         attributes::{Attribute, parse_outer_attributes},
         item::{
-            associated::TypeAlias,
-            constant::ConstantItem,
             enum_item::EnumItem,
-            extern_block::ExternBlockItem,
-            extern_crate::ExternCrateItem,
-            function::FunctionItem,
-            implementation::Implementation,
             macro_item::{MacroInvocationItem, MacroItem, MacroRulesItem},
-            module::ModItem,
-            static_item::StaticItem,
             r#struct::Struct,
-            trait_item::TraitItem,
-            r#use::UseItem,
         },
+        path::ConstArg,
         tokens::{Colon, Comma, Const, Eq, For, Gt, Lt, Plus, Question, Quote, Where},
         r#type::{Type, TypePath},
         visibility::Visibility,
     },
     combinator::{Punctuated, StopOnError},
     error::Diagnostics,
-    parse::{Parse, ParseBuffer},
+    parse::{Parse, Peek},
     proc_macro::{Group, Ident},
 };
 
+#[cfg(feature = "full")]
 pub mod associated;
+#[cfg(feature = "full")]
 pub mod constant;
 pub mod enum_item;
+#[cfg(feature = "full")]
 pub mod extern_block;
+#[cfg(feature = "full")]
 pub mod extern_crate;
+#[cfg(feature = "full")]
 pub mod function;
+#[cfg(feature = "full")]
 pub mod impl_item;
+#[cfg(feature = "full")]
 pub mod implementation;
 pub mod macro_item;
+#[cfg(feature = "full")]
 pub mod module;
+#[cfg(feature = "full")]
 pub mod static_item;
 pub mod r#struct;
+#[cfg(feature = "full")]
 pub mod trait_item;
+#[cfg(feature = "full")]
 pub mod r#use;
 
 /// A top-level Rust item: everything that can appear directly inside a
@@ -70,7 +78,9 @@ pub mod r#use;
 /// each concrete item kind in turn.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items.html>
-#[derive(Clone, Debug)]
+#[cfg(feature = "full")]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Item {
     /// A `struct` item.
     ///
@@ -137,14 +147,15 @@ pub enum Item {
 /// A `const` generic parameter, e.g. `const N: usize = 5` inside `<...>`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html#const-generics>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ConstParam {
     const_token: Const,
     /// This parameter's name.
     pub ident: Ident,
     colon: Colon,
     ty: Type,
-    default: Option<(Eq, Type)>,
+    default: Option<(Eq, ConstArg)>,
 }
 
 /// Adds leading outer attributes and a [`Visibility`] to any inner item type
@@ -153,7 +164,8 @@ pub struct ConstParam {
 /// This is the type every `ItemXxx` alias (e.g. [`ItemStruct`]) expands to;
 /// it [`Deref`]s to `T`, so `T`'s own methods are callable directly on a
 /// `VisItem<T>`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct VisItem<T> {
     attributes: Vec<Attribute>,
     visibility: Visibility,
@@ -168,7 +180,8 @@ pub struct VisItem<T> {
 /// as its input parameter.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/procedural-macros.html#derive-macros>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum DeriveInput {
     /// Deriving on a `struct`.
     Struct(Box<ItemStruct>),
@@ -281,13 +294,32 @@ impl<T> DerefMut for VisItem<T> {
     }
 }
 
-impl ToTokens for ConstParam {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+impl ConstParam {
+    /// Everything but the default, as written in an `impl<...>` header.
+    fn to_tokens_without_default(&self, tokens: &mut TokenStream) {
         self.const_token.to_tokens(tokens);
         self.ident.to_tokens(tokens);
         self.colon.to_tokens(tokens);
         self.ty.to_tokens(tokens);
+    }
+}
+
+impl ToTokens for ConstParam {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.to_tokens_without_default(tokens);
         self.default.to_tokens(tokens);
+    }
+}
+
+impl GenericParam {
+    /// This parameter without its default, as written in an `impl<...>`
+    /// header (where defaults are not allowed).
+    pub(crate) fn to_tokens_without_default(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Type(param) => param.to_tokens_without_default(tokens),
+            Self::Lifetime(param) => param.to_tokens(tokens),
+            Self::Const(param) => param.to_tokens_without_default(tokens),
+        }
     }
 }
 
@@ -310,6 +342,7 @@ impl<T: ToTokens> ToTokens for VisItem<T> {
     }
 }
 
+#[cfg(feature = "full")]
 impl Parse for Item {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         let attributes = parse_outer_attributes(input);
@@ -436,6 +469,7 @@ impl Parse for DeriveInput {
         }
     }
 }
+#[cfg(feature = "full")]
 impl ToTokens for Item {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
@@ -469,24 +503,33 @@ impl ToTokens for DeriveInput {
 /// A [`Struct`] item with its attributes and visibility.
 pub type ItemStruct = VisItem<Struct>;
 /// A [`ConstantItem`] item with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemConst = VisItem<ConstantItem>;
 /// A [`TypeAlias`] item with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemTypeAlias = VisItem<TypeAlias>;
 /// A [`UseItem`] item with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemUse = VisItem<UseItem>;
 /// An [`ExternCrateItem`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemExternCrate = VisItem<ExternCrateItem>;
 /// An [`ExternBlockItem`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemExternBlock = VisItem<ExternBlockItem>;
 /// A [`ModItem`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemMod = VisItem<ModItem>;
 /// An [`EnumItem`] with its attributes and visibility.
 pub type ItemEnum = VisItem<EnumItem>;
 /// A [`FunctionItem`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemFunction = VisItem<FunctionItem>;
 /// A [`TraitItem`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemTrait = VisItem<TraitItem>;
 /// A [`StaticItem`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemStatic = VisItem<StaticItem>;
 /// A [`MacroRulesItem`] with its attributes and visibility.
 pub type ItemMacroRules = VisItem<MacroRulesItem>;
@@ -495,12 +538,14 @@ pub type ItemMacro = VisItem<MacroItem>;
 /// A [`MacroInvocationItem`] with its attributes and visibility.
 pub type ItemMacroInvocation = VisItem<MacroInvocationItem>;
 /// An [`Implementation`] with its attributes and visibility.
+#[cfg(feature = "full")]
 pub type ItemImpl = VisItem<Implementation>;
 
 /// A `where` clause: `where T: Clone, 'a: 'b`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct WhereClause {
     where_keyword: Where,
     generics: Punctuated<WhereClauseItem, Comma, StopOnError>,
@@ -510,7 +555,8 @@ pub struct WhereClause {
 /// a type bound (`T: Trait`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum WhereClauseItem {
     /// A lifetime bound: `'a: 'b`.
     Lifetime(LifetimeWhereClauseItem),
@@ -521,7 +567,8 @@ pub enum WhereClauseItem {
 /// A lifetime bound inside a `where` clause: `'a: 'b + 'c`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LifetimeWhereClauseItem {
     lifetime: Lifetime,
     colon: Colon,
@@ -531,7 +578,8 @@ pub struct LifetimeWhereClauseItem {
 /// A type bound inside a `where` clause: `for<'a> T: Trait<'a>`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html#where-clauses>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeBoundWhereClauseItem {
     for_lifetimes: Option<(For, GenericParams)>,
     ty: Type,
@@ -542,7 +590,8 @@ pub struct TypeBoundWhereClauseItem {
 /// A generic parameter list: `<T: Clone, 'a, const N: usize>`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct GenericParams {
     /// The opening `<`.
     pub start_token: Lt,
@@ -585,7 +634,8 @@ impl<'a> IntoIterator for &'a mut GenericParams {
 /// parameter.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum GenericParam {
     /// A type parameter.
     Type(Box<TypeParam>),
@@ -600,7 +650,8 @@ pub enum GenericParam {
 /// A type generic parameter: `T: Bound1 + Bound2 = Default`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeParam {
     /// This parameter's name.
     pub ident: Ident,
@@ -616,7 +667,8 @@ pub struct TypeParam {
 /// `TypeParamBounds` altogether, e.g. `TypeParam::bounds` being unbounded).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeParamBounds {
     bounds: Punctuated<TypeParamBound, Plus, StopOnError>,
 }
@@ -651,7 +703,8 @@ impl TypeParamBounds {
 /// One bound inside a [`TypeParamBounds`] list: a trait bound or a lifetime.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum TypeParamBound {
     /// A trait bound.
     Trait(Box<TraitBound>),
@@ -673,7 +726,8 @@ impl TypeParamBound {
 /// A lifetime generic parameter: `'a: 'b + 'c`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/generics.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LifetimeParam {
     lifetime: Lifetime,
     bounds: Option<(Colon, LifetimeBounds)>,
@@ -684,7 +738,8 @@ pub struct LifetimeParam {
 /// [`Group`], if present, so it can be re-emitted on the round trip.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TraitBound {
     group: Option<Group>,
     question: Option<Question>,
@@ -703,7 +758,8 @@ impl TraitBound {
 /// A lifetime, e.g. `'a`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#lifetimes-and-loop-labels>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Lifetime {
     quote: Quote,
     ident: Ident,
@@ -720,7 +776,8 @@ impl Lifetime {
 /// A `+`-separated, non-empty list of lifetime bounds: `'b + 'c`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html#lifetime-bounds>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LifetimeBounds {
     bounds: Punctuated<Lifetime, Plus, StopOnError>,
 }
@@ -903,21 +960,26 @@ impl ToTokens for TypeParamBound {
 }
 impl Parse for TraitBound {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        if let Some(group) = input.peek_group()
-            && group.delimiter() == Delimiter::Parenthesis
-        {
-            let mut inner = ParseBuffer::new(group.stream());
+        if let Some((group, mut inner)) = input.delimited(Delimiter::Parenthesis) {
             Ok(Self {
-                group: input.group(),
-                question: inner.peek_parse().ok(),
-                for_lifetimes: inner.try_parse().ok(),
+                group: Some(group),
+                question: inner.parse()?,
+                for_lifetimes: if For::peek(&inner) {
+                    inner.try_parse().ok()
+                } else {
+                    None
+                },
                 path: inner.parse()?,
             })
         } else {
             Ok(Self {
                 group: None,
-                question: input.peek_parse().ok(),
-                for_lifetimes: input.try_parse().ok(),
+                question: input.parse()?,
+                for_lifetimes: if For::peek(input) {
+                    input.try_parse().ok()
+                } else {
+                    None
+                },
                 path: input.parse()?,
             })
         }
@@ -940,8 +1002,9 @@ impl ToTokens for TraitBound {
     }
 }
 
-impl ToTokens for TypeParam {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+impl TypeParam {
+    /// Everything but the default, as written in an `impl<...>` header.
+    fn to_tokens_without_default(&self, tokens: &mut TokenStream) {
         self.ident.to_tokens(tokens);
         match &self.colon {
             Some(colon) => colon.to_tokens(tokens),
@@ -950,6 +1013,12 @@ impl ToTokens for TypeParam {
             None => {}
         }
         self.bounds.to_tokens(tokens);
+    }
+}
+
+impl ToTokens for TypeParam {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.to_tokens_without_default(tokens);
         self.default.to_tokens(tokens);
     }
 }

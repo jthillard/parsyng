@@ -1,4 +1,4 @@
-// `.into()` is only a no-op when parsyng is built without `proc-macro2`.
+// `.into()` is only a no-op when parsyng is built without `fallback`.
 #![allow(clippy::useless_conversion)]
 
 use parsyng::ToTokens as _;
@@ -50,19 +50,12 @@ pub fn heap_size(input: Input) -> Input {
     };
     let sum: TokenStream = match data.fields {
         StructFields::Named(ref fields) => {
-            // parsyng's `#(...)*` does not see variables nested in groups yet,
-            // so build each term separately.
-            let mut terms = fields.inner_ref().iter().map(|f| {
-                quote! { crate::HeapSize::heap_size_of_children(&self.#{ f.ident }) }
-            });
-            quote! { 0 #(+ #terms)* }
+            let mut names = fields.inner_ref().iter().map(|f| &f.ident);
+            quote! { 0 #(+ crate::HeapSize::heap_size_of_children(&self.#names))* }
         }
         StructFields::Unnamed(ref fields) => {
-            let mut terms = (0..fields.inner_ref().iter().count()).map(|i| {
-                let index = Index::from(i);
-                quote! { crate::HeapSize::heap_size_of_children(&self.#index) }
-            });
-            quote! { 0 #(+ #terms)* }
+            let mut indices = (0..fields.inner_ref().iter().count()).map(Index::from);
+            quote! { 0 #(+ crate::HeapSize::heap_size_of_children(&self.#indices))* }
         }
         StructFields::Unit => quote!(0),
     };
@@ -75,4 +68,15 @@ pub fn heap_size(input: Input) -> Input {
         }
     };
     out.into()
+}
+
+#[cfg(feature = "parse-bench")]
+pub fn parse_file(input: Input) -> Input {
+    match parse_all::<parsyng::ast::crate_source::Crate>(input.into()) {
+        Ok(file) => {
+            core::hint::black_box(file);
+            Input::new()
+        }
+        Err(e) => e.to_token_stream().into(),
+    }
 }

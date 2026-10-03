@@ -175,3 +175,8 @@ pub fn heap_size(input: Input) -> Input {
     }
     .into()
 }
+
+#[cfg(feature = "parse-bench")]
+pub fn parse_file(_: Input) -> Input {
+    quote! { compile_error!("unsynn has no Rust grammar to parse a whole file with"); }.into()
+}

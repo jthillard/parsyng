@@ -13,7 +13,8 @@ use crate::{
 /// -> T { ... }`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct FunctionItem {
     signature: FnSignature,
     body: FunctionBody,
@@ -24,7 +25,8 @@ pub struct FunctionItem {
 /// `extern` blocks and trait method declarations).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum FunctionBody {
     /// `{ ... }`.
     Block(Braced<TokenStream>),

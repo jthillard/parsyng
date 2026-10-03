@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "unsynn", recursion_limit = "512")]
 //! Compile-time cost of each library's quasi-quoting macro alone: the crate
 //! expands the same template (`empty`, `small` or `big`) with `quote`,
-//! `unsynn`, `moxy` or `parsyng-core`.
+//! `unsynn`, `moxy` or `parsyng`.
 
 // Each feature combination uses a different subset of the macros and imports.
 #![allow(unused_imports, unused_macros)]
@@ -9,9 +9,8 @@
 use proc_macro::TokenStream;
 
 cfg_select! {
-    feature = "parsyng-core" => {
-        use parsyng_core::{format_ident, quote};
-        use parsyng_core as parsyng;
+    feature = "parsyng" => {
+        use parsyng::{format_ident, quote};
         macro_rules! expand {
             ($template:ident, $id:ident) => { $template!(quote, (#$id)) };
         }

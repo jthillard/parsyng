@@ -1,5 +1,9 @@
 //! Implementation of the [`proc_macro`](proc_macro_), [`proc_macro_attribute`](proc_macro_attribute_)
 //! and the [`proc_macro_derive`](proc_macro_derive_) procedural macros, and [`Parse`], [`ToTokens`] derive macros for `parsyng`.
+//!
+//! This crate only depends on the compiler's `proc_macro`, not on
+//! `parsyng-core`, so that both compile in parallel: it walks just the
+//! outline of its input (see `tokens`) and passes every other token through.
 
 #![deny(
     clippy::all,
@@ -12,47 +16,49 @@
     unused_doc_comments,
     missing_docs
 )]
-// We need to add `.into()` due to the `proc-macro2` feature.
-#![allow(clippy::useless_conversion)]
 
-use parsyng_core as parsyng;
+use proc_macro::{Ident, Literal, Span, TokenStream};
 
-use parsyng_core::quote;
-use proc_macro::{Span, TokenStream};
-
-mod derive_common;
 mod derive_parse;
 mod derive_to_tokens;
 mod helper_common;
 mod proc_macro_attribute_helper;
 mod proc_macro_derive_helper;
 mod proc_macro_helper;
+mod tokens;
 
-/// Create the debug call used to print the macro output if the user added the `debug` attribute.
-pub(crate) fn dbg_macros(
-    macro_name: &parsyng_core::proc_macro::Ident,
-) -> parsyng_core::proc_macro::TokenStream {
-    let location = &format!(
+use tokens::Out;
+
+/// `parsyng::debug_stream("<macro>", "<location>", &output);`
+pub(crate) fn dbg_macros(macro_name: &Ident) -> Out {
+    let location = format!(
         "{}:{}:{}",
         Span::call_site().file(),
         Span::call_site().line(),
         Span::call_site().column()
     );
-    quote! {
-        parsyng::debug_stream(#{ macro_name.to_string() }, #location, &output);
-    }
+    let mut args = Out::new();
+    args.tree(Literal::string(&macro_name.to_string()))
+        .src(",")
+        .tree(Literal::string(&location))
+        .src(", &output");
+    let mut out = Out::new();
+    out.src("parsyng::debug_stream")
+        .group(proc_macro::Delimiter::Parenthesis, args)
+        .src(";");
+    out
 }
 
 /// Helper attribute to build new procedural macros. This replaces the
 /// standard library's `#[proc_macro]` attribute.
 ///
 /// It differs from the standard library's by allowing any input type that
-/// implements the [`Parse`](parsyng_core::Parse) trait — the input is parsed
+/// implements the [`Parse`](https://docs.rs/parsyng/latest/parsyng/parse/trait.Parse.html) trait — the input is parsed
 /// automatically, and a parse failure is turned into a `compile_error!` at
 /// the offending span instead of panicking the proc-macro process. It allows
-/// any output type that implements [`ToTokens`](parsyng_core::ToTokens),
+/// any output type that implements [`ToTokens`](https://docs.rs/parsyng/latest/parsyng/trait.ToTokens.html),
 /// automatically converting it into a [`TokenStream`]. Since
-/// [`Result<T, E>`](Result) implements [`ToTokens`](parsyng_core::ToTokens)
+/// [`Result<T, E>`](Result) implements [`ToTokens`](https://docs.rs/parsyng/latest/parsyng/trait.ToTokens.html)
 /// whenever `T` and `E` do (and `error::Diagnostics` implements it too), the
 /// annotated function can return `error::Result<T>` to fail with a spanned
 /// diagnostic from inside the macro body too, not just during argument
@@ -82,21 +88,20 @@ pub(crate) fn dbg_macros(
 // Export with an underscore, since it will conflicts with the `proc_macro` builtin.
 #[proc_macro_attribute]
 pub fn proc_macro_(args: TokenStream, input: TokenStream) -> TokenStream {
-    match proc_macro_helper::proc_macro(args.into(), input.into()) {
+    match proc_macro_helper::proc_macro(args, input) {
         Ok(ok) => ok,
-        Err(err) => parsyng_core::ToTokens::to_token_stream(&err),
+        Err(err) => err.into_compile_error(),
     }
-    .into()
 }
 
 /// Helper attribute to build new procedural macro attributes. This replaces
 /// the standard library's `#[proc_macro_attribute]` attribute.
 ///
 /// Like [`proc_macro`](proc_macro_), it lets the annotated function take
-/// typed, [`Parse`](parsyng_core::Parse)-implementing arguments — one for
+/// typed, [`Parse`](https://docs.rs/parsyng/latest/parsyng/parse/trait.Parse.html)-implementing arguments — one for
 /// the attribute's own arguments (`attr` in `#[my_attr(attr)] item`), one
 /// for the annotated item — and return any
-/// [`ToTokens`](parsyng_core::ToTokens) value, instead of manually parsing
+/// [`ToTokens`](https://docs.rs/parsyng/latest/parsyng/trait.ToTokens.html) value, instead of manually parsing
 /// two `proc_macro::TokenStream`s and matching on the results.
 ///
 /// Accepts the same optional `debug` argument as
@@ -116,20 +121,19 @@ pub fn proc_macro_(args: TokenStream, input: TokenStream) -> TokenStream {
 // Export with an underscore, since it will conflicts with the `proc_macro_attribute` builtin.
 #[proc_macro_attribute]
 pub fn proc_macro_attribute_(args: TokenStream, input: TokenStream) -> TokenStream {
-    match proc_macro_attribute_helper::proc_macro_attribute(args.into(), input.into()) {
+    match proc_macro_attribute_helper::proc_macro_attribute(args, input) {
         Ok(ok) => ok,
-        Err(err) => parsyng_core::ToTokens::to_token_stream(&err),
+        Err(err) => err.into_compile_error(),
     }
-    .into()
 }
 
 /// Helper attribute to build new derive macros. This replaces the standard
 /// library's `#[proc_macro_derive]` attribute.
 ///
 /// Like [`proc_macro`](proc_macro_), it lets the annotated function take a
-/// single typed, [`Parse`](parsyng_core::Parse)-implementing argument —
-/// typically [`ast::item::DeriveInput`](parsyng_core::ast::item::DeriveInput)
-/// — and return any [`ToTokens`](parsyng_core::ToTokens) value.
+/// single typed, [`Parse`](https://docs.rs/parsyng/latest/parsyng/parse/trait.Parse.html)-implementing argument —
+/// typically [`ast::item::DeriveInput`](https://docs.rs/parsyng/latest/parsyng/ast/item/type.DeriveInput.html)
+/// — and return any [`ToTokens`](https://docs.rs/parsyng/latest/parsyng/trait.ToTokens.html) value.
 ///
 /// The attribute's argument names the derive trait, exactly as with the
 /// standard library's version: `#[parsyng::proc_macro_derive(MyTrait)]`.
@@ -154,15 +158,14 @@ pub fn proc_macro_attribute_(args: TokenStream, input: TokenStream) -> TokenStre
 // Export with an underscore, since it will conflicts with the `proc_macro_derive` builtin.
 #[proc_macro_attribute]
 pub fn proc_macro_derive_(args: TokenStream, input: TokenStream) -> TokenStream {
-    match proc_macro_derive_helper::proc_macro_derive(args.into(), input.into()) {
+    match proc_macro_derive_helper::proc_macro_derive(args, input) {
         Ok(ok) => ok,
-        Err(err) => parsyng_core::ToTokens::to_token_stream(&err),
+        Err(err) => err.into_compile_error(),
     }
-    .into()
 }
 
-/// Derives [`Parse`](parsyng_core::Parse) by parsing each field, in
-/// declaration order, with its own [`Parse`](parsyng_core::Parse)
+/// Derives [`Parse`](https://docs.rs/parsyng/latest/parsyng/parse/trait.Parse.html) by parsing each field, in
+/// declaration order, with its own [`Parse`](https://docs.rs/parsyng/latest/parsyng/parse/trait.Parse.html)
 /// implementation.
 ///
 /// Equivalent to writing, for `struct Foo { a: A, b: B }`:
@@ -187,14 +190,13 @@ pub fn proc_macro_derive_(args: TokenStream, input: TokenStream) -> TokenStream 
 /// See [`macro@ToTokens`] for the complementary derive.
 #[proc_macro_derive(Parse)]
 pub fn derive_parse(input: TokenStream) -> TokenStream {
-    match derive_parse::derive_parse(input.into()) {
+    match derive_parse::derive_parse(input) {
         Ok(ok) => ok,
-        Err(err) => parsyng_core::ToTokens::to_token_stream(&err),
+        Err(err) => err.into_compile_error(),
     }
-    .into()
 }
 
-/// Derives [`ToTokens`](parsyng_core::ToTokens) by appending each field's
+/// Derives [`ToTokens`](https://docs.rs/parsyng/latest/parsyng/trait.ToTokens.html) by appending each field's
 /// own tokens, in declaration order.
 ///
 /// Equivalent to writing, for `struct Foo { a: A, b: B }`:
@@ -216,9 +218,8 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
 /// See [`macro@Parse`] for the complementary derive.
 #[proc_macro_derive(ToTokens)]
 pub fn derive_to_tokens(input: TokenStream) -> TokenStream {
-    match derive_to_tokens::derive_to_tokens(input.into()) {
+    match derive_to_tokens::derive_to_tokens(input) {
         Ok(ok) => ok,
-        Err(err) => parsyng_core::ToTokens::to_token_stream(&err),
+        Err(err) => err.into_compile_error(),
     }
-    .into()
 }

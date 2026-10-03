@@ -7,7 +7,7 @@ use crate::{
     ast::{
         delimiter::{Bracketed, Parenthesized},
         item::{Lifetime, TypeParamBounds},
-        path::TypePathSegment,
+        path::{TypePathSegment, parse_leading_path_sep, parse_path_tail},
         tokens::{
             And, As, Comma, Const, Dyn, Extern, Fn, Gt, Impl, Lt, Mut, Not, PathSep, RArrow,
             Semicolon, Star, Unsafe,
@@ -23,7 +23,8 @@ use crate::{
 /// and so on.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Type {
     /// A parenthesized type `(T)`, used for disambiguation (as opposed to a
     /// 1-element [`Tuple`](Self::Tuple) `(T,)`, which requires a trailing
@@ -110,7 +111,8 @@ impl Type {
 /// generics-free equivalent used elsewhere (`use` trees, macro paths).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-types>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypePath {
     start_token: Option<PathSep>,
     root: TypePathSegment,
@@ -122,6 +124,7 @@ impl TypePath {
     /// [`TypePathSegment::parse_expression`] (turbofish-only generics).
     ///
     /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+    #[cfg(feature = "full")]
     pub(crate) fn parse_expression(input: &mut ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
             start_token: input.try_parse::<PathSep>().ok(),
@@ -156,7 +159,8 @@ impl TypeBareFn {
 /// A reference type: `&'a mut T`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#references--and-mut>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeReference {
     and_token: And,
     lifetime: Option<Lifetime>,
@@ -167,7 +171,8 @@ pub struct TypeReference {
 /// Whether a [`TypePointer`] is `*const` or `*mut`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#raw-pointers-const-and-mut>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum TypePointerKind {
     /// `*const T`.
     Const(Const),
@@ -178,7 +183,8 @@ pub enum TypePointerKind {
 /// A raw pointer type: `*const T` / `*mut T`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/pointer.html#raw-pointers-const-and-mut>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypePointer {
     star_token: Star,
     kind: TypePointerKind,
@@ -189,7 +195,8 @@ pub struct TypePointer {
 /// [`TokenStream`] rather than a full expression).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/array.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeArray {
     elem: Box<Type>,
     semicolon: Semicolon,
@@ -199,7 +206,8 @@ pub struct TypeArray {
 /// An `impl Trait` type: `impl Trait + 'a`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/impl-trait.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeImplTrait {
     impl_token: Impl,
     bounds: TypeParamBounds,
@@ -208,7 +216,8 @@ pub struct TypeImplTrait {
 /// A `dyn Trait` type: `dyn Trait + 'a`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/trait-object.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeDynTrait {
     dyn_token: Dyn,
     bounds: TypeParamBounds,
@@ -217,7 +226,8 @@ pub struct TypeDynTrait {
 /// A bare function pointer type: `unsafe extern "C" fn(A, ...) -> B`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeBareFn {
     unsafety: Option<Unsafe>,
     extern_token: Option<(Extern, Option<Literal>)>,
@@ -229,7 +239,8 @@ pub struct TypeBareFn {
 /// One parameter of a [`TypeBareFn`]: a type, or the C-variadic `...`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum BareFnParam {
     /// A typed parameter.
     Type(Box<Type>),
@@ -240,7 +251,8 @@ pub enum BareFnParam {
 /// A fully qualified path: `<T as Trait>::Assoc::Path`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#qualified-paths>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeQualifiedPath {
     lt_token: Lt,
     ty: Box<Type>,
@@ -252,9 +264,9 @@ pub struct TypeQualifiedPath {
 impl Parse for TypePath {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
-            start_token: input.try_parse::<PathSep>().ok(),
+            start_token: parse_leading_path_sep(input),
             root: input.parse()?,
-            paths: input.parse()?,
+            paths: parse_path_tail(input, TypePathSegment::parse),
         })
     }
 }
@@ -354,17 +366,9 @@ impl Parse for TypeBareFn {
 
 /// The `::segment` tail of an expression path, each segment parsed with
 /// [`TypePathSegment::parse_expression`].
+#[cfg(feature = "full")]
 fn parse_expression_segments(input: &mut ParseBuffer) -> Vec<(PathSep, TypePathSegment)> {
-    let mut paths = Vec::new();
-    while let Ok(pair) = input.try_advance(|input| {
-        Ok((
-            input.parse::<PathSep>()?,
-            TypePathSegment::parse_expression(input)?,
-        ))
-    }) {
-        paths.push(pair);
-    }
-    paths
+    parse_path_tail(input, TypePathSegment::parse_expression)
 }
 
 impl TypeQualifiedPath {
@@ -373,6 +377,7 @@ impl TypeQualifiedPath {
     /// segments with turbofish-only generics.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/paths.html#qualified-paths>
+    #[cfg(feature = "full")]
     pub(crate) fn parse_expression(input: &mut ParseBuffer) -> crate::error::Result<Self> {
         Self::parse_with(input, TypePathSegment::parse_expression)
     }
@@ -415,37 +420,30 @@ impl Parse for TypeQualifiedPath {
 
 impl Parse for Type {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        let mut diagnostics = Diagnostics::empty();
-
-        if let Ok(reference) = input.try_parse() {
-            return Ok(Self::Reference(reference));
+        // Every alternative starts with a distinct token, so dispatch on it
+        // instead of trying each one in turn.
+        if let Some((ch, _)) = input.peek_punct_char() {
+            match ch {
+                '&' => return input.parse().map(Self::Reference),
+                '*' => return input.parse().map(Self::Pointer),
+                '!' => return input.parse::<Not>().map(Self::Never),
+                '<' => return input.parse().map(Self::QualifiedPath),
+                _ => {}
+            }
         }
-        if let Ok(pointer) = input.try_parse() {
-            return Ok(Self::Pointer(pointer));
-        }
-        if let Ok(never) = input.try_parse::<Not>() {
-            return Ok(Self::Never(never));
-        }
-        if let Ok(bare_fn) = input.try_parse() {
-            return Ok(Self::BareFn(Box::new(bare_fn)));
-        }
-        if let Ok(impl_trait) = input.try_parse() {
-            return Ok(Self::ImplTrait(impl_trait));
-        }
-        if let Ok(dyn_trait) = input.try_parse() {
-            return Ok(Self::DynTrait(dyn_trait));
-        }
-        if let Ok(qualified) = input.try_parse() {
-            return Ok(Self::QualifiedPath(qualified));
-        }
-        if let Ok(macro_invocation) = input.try_parse() {
-            return Ok(Self::MacroInvocation(macro_invocation));
+        match input.peek_ident_str() {
+            Some("fn" | "unsafe" | "extern") => {
+                return input.parse().map(|bare_fn| Self::BareFn(Box::new(bare_fn)));
+            }
+            Some("impl") => return input.parse().map(Self::ImplTrait),
+            Some("dyn") => return input.parse().map(Self::DynTrait),
+            _ => {}
         }
         if let Some(group) = input.peek_group() {
             match group.delimiter() {
                 Delimiter::Parenthesis => {
-                    let group = input.group().expect("peeked group must exist");
-                    let mut inner = ParseBuffer::new(group.stream());
+                    let (group, mut inner) =
+                        input.group_contents().expect("peeked group must exist");
                     let content: Punctuated<Self, Comma> = inner.parse()?;
                     if !inner.is_empty() {
                         return Err(Diagnostics::new_error_spanned(
@@ -472,11 +470,14 @@ impl Parse for Type {
             }
         }
 
-        match input.try_parse() {
-            Ok(ok) => return Ok(Self::Path(ok)),
-            Err(err) => diagnostics.join(err),
+        // A path, or a macro invocation if the path is followed by `!`.
+        let mut fork = input.clone();
+        let path = fork.parse()?;
+        if fork.peek_punct_char().is_some_and(|(ch, _)| ch == '!') {
+            return input.parse().map(Self::MacroInvocation);
         }
-        Err(diagnostics)
+        *input = fork;
+        Ok(Self::Path(path))
     }
 }
 

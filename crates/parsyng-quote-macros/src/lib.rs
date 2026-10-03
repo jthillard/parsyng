@@ -13,7 +13,7 @@
 )]
 #![allow(clippy::too_many_lines)]
 
-use proc_macro::{Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
+use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
 const INTERPOLATION_CHAR: char = '#';
 
@@ -51,7 +51,7 @@ const INTERPOLATION_CHAR: char = '#';
 /// ```
 #[proc_macro]
 pub fn quote(input: TokenStream) -> TokenStream {
-    parse_tokenstream(input, false, &mut None, &mut Vec::new())
+    parse_tokenstream(input, false)
 }
 
 /// Builds a `compile_error! { ... }` token stream, used to surface errors from
@@ -122,321 +122,383 @@ pub fn quote_spanned(input: TokenStream) -> TokenStream {
     output.extend(span);
     output.extend::<[TokenTree; _]>([TokenTree::Punct(Punct::new(';', Spacing::Alone))]);
 
-    output.extend(parse_tokenstream(
-        stream.collect(),
-        true,
-        &mut None,
-        &mut Vec::new(),
-    ));
+    output.extend(parse_tokenstream(stream.collect(), true));
 
     let mut result = TokenStream::new();
     result.extend([Group::new(proc_macro::Delimiter::Brace, output)]);
     result
 }
 
-/// Walks `stream` and emits a `{ ... }` block of Rust statements that rebuild it
-/// at runtime, expanding `#interpolation`, `#{expression}` and `#(...)*` as it
-/// goes. The returned block evaluates to a `parsyng::proc_macro::TokenStream`
-/// named `tokens`, except when called recursively for the body of a `#(...)*`
-/// repetition (`in_repetition.is_some()`), in which case it only pushes into the
-/// caller's `tokens` and returns no value.
-///
-/// `in_repetition` also doubles as the loop prologue being built for the
-/// enclosing repetition: each interpolated ident used inside it gets a
-/// `.next()`-and-break-on-`None` statement appended, which is why
-/// `repetition_ident_already_used` exists, to avoid emitting that statement more
-/// than once per ident.
-fn parse_tokenstream(
-    stream: TokenStream,
-    span: bool,
-    in_repetition: &mut Option<TokenStream>,
-    repetition_ident_already_used: &mut Vec<String>,
-) -> TokenStream {
-    let mut output: TokenStream = TokenStream::new();
+/// One piece of `quote!`'s output.
+enum Item {
+    /// Literal tokens (groups without interpolations included), already
+    /// encoded for `__private::extend_static`. Consecutive runs are merged
+    /// into a single call.
+    Static(Vec<u8>),
+    /// An expression evaluating to a single `TokenTree` (a group containing
+    /// interpolations).
+    Tree(TokenStream),
+    /// Statements pushing into `tokens` (interpolations, repetitions).
+    Code(TokenStream),
+}
 
-    let in_repetition_bool = in_repetition.is_some();
+/// The state of an enclosing `#(...)*` repetition: its loop prologue (one
+/// `let x = match x.next() { .. }` per interpolated variable) and the
+/// variables already in it.
+struct Repetition {
+    prologue: TokenStream,
+    used: Vec<String>,
+}
 
-    if !in_repetition_bool {
-        output.extend(
-            "let mut tokens = parsyng::proc_macro::TokenStream::new();".parse::<TokenStream>(),
-        );
+fn ident(name: &str) -> TokenTree {
+    Ident::new(name, Span::call_site()).into()
+}
+
+fn punct(ch: char) -> TokenTree {
+    Punct::new(ch, Spacing::Alone).into()
+}
+
+fn joint(ch: char) -> TokenTree {
+    Punct::new(ch, Spacing::Joint).into()
+}
+
+fn group(delimiter: Delimiter, stream: TokenStream) -> TokenTree {
+    Group::new(delimiter, stream).into()
+}
+
+/// `parsyng :: <segments> :: ...`
+fn path(out: &mut TokenStream, segments: &[&str]) {
+    out.extend([ident("parsyng")]);
+    for segment in segments {
+        out.extend([joint(':'), punct(':'), ident(segment)]);
     }
+}
 
+/// `parsyng::quote::__private::<helper>(<args>)`
+fn call_private(helper: &str, args: TokenStream) -> TokenStream {
+    let mut out = TokenStream::new();
+    path(&mut out, &["quote", "__private", helper]);
+    out.extend([group(Delimiter::Parenthesis, args)]);
+    out
+}
+
+/// `<arg>, span` when spanned, `<arg>` otherwise.
+fn with_span(mut args: TokenStream, spanned: bool) -> TokenStream {
+    if spanned {
+        args.extend([punct(','), ident("span")]);
+    }
+    args
+}
+
+/// `let mut tokens = parsyng::proc_macro::TokenStream::new();`
+fn new_tokens() -> TokenStream {
+    let mut out = TokenStream::new();
+    out.extend([ident("let"), ident("mut"), ident("tokens"), punct('=')]);
+    path(&mut out, &["proc_macro", "TokenStream", "new"]);
+    out.extend([
+        group(Delimiter::Parenthesis, TokenStream::new()),
+        punct(';'),
+    ]);
+    out
+}
+
+/// `&mut tokens, <rest>`
+fn tokens_and(rest: impl IntoIterator<Item = TokenTree>) -> TokenStream {
+    let mut args = TokenStream::new();
+    args.extend([punct('&'), ident("mut"), ident("tokens"), punct(',')]);
+    args.extend(rest);
+    args
+}
+
+/// The statements appending `items` to `tokens`.
+fn emit(items: Vec<Item>, spanned: bool) -> TokenStream {
+    let mut out = TokenStream::new();
+    let mut run = Vec::new();
+    let flush = |out: &mut TokenStream, run: &mut Vec<u8>| {
+        if run.is_empty() {
+            return;
+        }
+        // `parsyng::quote::__private::extend_static(&mut tokens, b"<ops>");`
+        let ops = TokenTree::Literal(Literal::byte_string(&core::mem::take(run)));
+        let helper = if spanned {
+            "extend_static_spanned"
+        } else {
+            "extend_static"
+        };
+        out.extend(call_private(helper, with_span(tokens_and([ops]), spanned)));
+        out.extend([punct(';')]);
+    };
+    for item in items {
+        match item {
+            Item::Static(ops) => run.extend_from_slice(&ops),
+            Item::Tree(tree) => {
+                flush(&mut out, &mut run);
+                // `parsyng::quote::__private::push(&mut tokens, <tree>);`
+                out.extend(call_private("push", tokens_and(tree)));
+                out.extend([punct(';')]);
+            }
+            Item::Code(code) => {
+                flush(&mut out, &mut run);
+                out.extend(code);
+            }
+        }
+    }
+    flush(&mut out, &mut run);
+    out
+}
+
+/// A block evaluating to the `TokenStream` described by `items`.
+fn stream_expression(items: Vec<Item>, spanned: bool) -> TokenStream {
+    let mut block = new_tokens();
+    block.extend(emit(items, spanned));
+    block.extend([ident("tokens")]);
+    group(Delimiter::Brace, block).into()
+}
+
+/// Walks `stream` and returns a `{ ... }` block of Rust statements that
+/// rebuild it at runtime, expanding `#interpolation`, `#{expression}` and
+/// `#(...)*`, and evaluating to a `parsyng::proc_macro::TokenStream`.
+fn parse_tokenstream(stream: TokenStream, spanned: bool) -> TokenStream {
+    let items = match parse_items(stream, spanned, &mut None) {
+        Ok(items) => items,
+        Err(error) => return error,
+    };
+    stream_expression(items, spanned)
+}
+
+/// `parsyng::ToTokens::to_tokens(&<interpolation>, &mut tokens);`
+fn interpolate(interpolation: TokenTree) -> Item {
+    let mut args = TokenStream::new();
+    args.extend([
+        punct('&'),
+        interpolation,
+        punct(','),
+        punct('&'),
+        ident("mut"),
+        ident("tokens"),
+    ]);
+    let mut code = TokenStream::new();
+    path(&mut code, &["ToTokens", "to_tokens"]);
+    code.extend([group(Delimiter::Parenthesis, args), punct(';')]);
+    Item::Code(code)
+}
+
+/// Registers `ident` as a variable iterated by the enclosing repetition:
+/// `let ident = match ident.next() { Some(ident) => ident, None => break };`
+fn register_repetition_variable(repetition: &mut Repetition, variable: &TokenTree) {
+    let name = variable.to_string();
+    if repetition.used.contains(&name) {
+        return;
+    }
+    repetition.used.push(name);
+
+    let mut match_body = TokenStream::new();
+    match_body.extend([
+        ident("Some"),
+        group(Delimiter::Parenthesis, TokenStream::from(variable.clone())),
+        joint('='),
+        punct('>'),
+        variable.clone(),
+        punct(','),
+        ident("None"),
+        joint('='),
+        punct('>'),
+        ident("break"),
+    ]);
+    repetition.prologue.extend([
+        ident("let"),
+        variable.clone(),
+        punct('='),
+        ident("match"),
+        variable.clone(),
+        punct('.'),
+        ident("next"),
+        group(Delimiter::Parenthesis, TokenStream::new()),
+        group(Delimiter::Brace, match_body),
+        punct(';'),
+    ]);
+}
+
+/// Translates `stream` into output items. `repetition` is the enclosing
+/// `#(...)*`, if any, including through nested groups.
+fn parse_items(
+    stream: TokenStream,
+    spanned: bool,
+    repetition: &mut Option<Repetition>,
+) -> Result<Vec<Item>, TokenStream> {
+    let mut items = Vec::new();
     let mut iter = stream.into_iter().peekable();
 
     while let Some(tt) = iter.next() {
-        if let Some(interpolation) = match tt {
-            TokenTree::Punct(ref punct)
-                if punct.as_char() == INTERPOLATION_CHAR
-                    && let Some(TokenTree::Ident(_)) = iter.peek() =>
-            {
-                let ident = iter.next().unwrap();
-                match in_repetition {
-                    None => Some(ident),
-                    Some(loop_prologue) => {
-                        if !repetition_ident_already_used.contains(&ident.to_string()) {
-                            repetition_ident_already_used.push(ident.to_string());
-
-                            let mut match_next: TokenStream = TokenStream::new();
-                            let mut match_body: TokenStream = TokenStream::new();
-
-                            // Make `Some({ident}) => {ident}, None => break`
-                            match_body.extend::<[TokenTree; _]>([
-                                Ident::new("Some", Span::call_site()).into(),
-                                Group::new(
-                                    proc_macro::Delimiter::Parenthesis,
-                                    TokenStream::from(ident.clone()),
-                                )
-                                .into(),
-                                Punct::new('=', Spacing::Joint).into(),
-                                Punct::new('>', Spacing::Alone).into(),
-                                ident.clone(),
-                                Punct::new(',', Spacing::Alone).into(),
-                                Ident::new("None", Span::call_site()).into(),
-                                Punct::new('=', Spacing::Joint).into(),
-                                Punct::new('>', Spacing::Alone).into(),
-                                Ident::new("break", Span::call_site()).into(),
-                            ]);
-
-                            // Make `let #ident = match {ident}.next() { {match_body} };`
-                            match_next.extend::<[TokenTree; _]>([
-                                Ident::new("let", Span::call_site()).into(),
-                                ident.clone(),
-                                Punct::new('=', Spacing::Alone).into(),
-                                Ident::new("match", Span::call_site()).into(),
-                                ident.clone(),
-                                Punct::new('.', Spacing::Alone).into(),
-                                Ident::new("next", Span::call_site()).into(),
-                                Group::new(proc_macro::Delimiter::Parenthesis, TokenStream::new())
-                                    .into(),
-                                Group::new(proc_macro::Delimiter::Brace, match_body).into(),
-                                Punct::new(';', Spacing::Alone).into(),
-                            ]);
-
-                            loop_prologue.extend(match_next);
-                        }
-
-                        Some(ident)
-                    }
+        let TokenTree::Punct(ref punct_token) = tt else {
+            items.push(token_item(tt, spanned, repetition)?);
+            continue;
+        };
+        if punct_token.as_char() != INTERPOLATION_CHAR {
+            items.push(token_item(tt, spanned, repetition)?);
+            continue;
+        }
+        match iter.peek() {
+            // `#ident`
+            Some(TokenTree::Ident(_)) => {
+                let ident = iter.next().expect("peeked");
+                if let Some(repetition) = repetition {
+                    register_repetition_variable(repetition, &ident);
                 }
+                items.push(interpolate(ident));
             }
-            TokenTree::Punct(ref punct)
-                if punct.as_char() == INTERPOLATION_CHAR
-                    && let Some(TokenTree::Group(g)) = iter.peek()
-                    && g.delimiter() == proc_macro::Delimiter::Brace =>
-            {
-                let TokenTree::Group(g) = iter.next().unwrap() else {
+            // `#{ expression }`
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => {
+                let Some(TokenTree::Group(g)) = iter.next() else {
                     unreachable!()
                 };
-                Some(TokenTree::Group(Group::new(
-                    proc_macro::Delimiter::None,
-                    g.stream(),
-                )))
+                items.push(interpolate(group(Delimiter::None, g.stream())));
             }
-            TokenTree::Punct(ref punct)
-                if punct.as_char() == INTERPOLATION_CHAR
-                    && let Some(TokenTree::Group(g)) = iter.peek()
-                    && g.delimiter() == proc_macro::Delimiter::Parenthesis =>
-            {
-                if in_repetition_bool {
-                    return make_compile_error(g.span(), {
+            // `#( ... ) <separator> *`
+            Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Parenthesis => {
+                if repetition.is_some() {
+                    return Err(make_compile_error(g.span(), {
                         let mut tk = TokenStream::new();
                         tk.extend([Literal::string(
                             "Quote repetition inside another repetition is forbidden",
                         )]);
                         tk
-                    });
+                    }));
                 }
-                let TokenTree::Group(g) = iter.next().unwrap() else {
+                let Some(TokenTree::Group(g)) = iter.next() else {
                     unreachable!()
                 };
 
-                let mut first_loop = TokenStream::new();
-
-                // Append tokens after #(...) to the first_loop until the first *
-                while let Some(tt) = match iter.next() {
-                    Some(TokenTree::Punct(punct)) => {
-                        if punct.as_char() == '*' {
-                            None
-                        } else {
-                            Some(TokenTree::Punct(punct))
-                        }
+                // The separator: every token up to the `*`. Its last punct is
+                // only joint because the `*` follows it.
+                let mut separator_tokens = Vec::new();
+                loop {
+                    match iter.next() {
+                        Some(TokenTree::Punct(p)) if p.as_char() == '*' => break,
+                        Some(tt) => separator_tokens.push(tt),
+                        None => break,
                     }
-                    tt => tt,
-                } {
-                    token_to_construction_code(
-                        &mut first_loop,
-                        tt,
-                        span,
-                        in_repetition,
-                        repetition_ident_already_used,
-                    );
                 }
+                if let Some(TokenTree::Punct(p)) = separator_tokens.last_mut() {
+                    let mut alone = Punct::new(p.as_char(), Spacing::Alone);
+                    alone.set_span(p.span());
+                    *p = alone;
+                }
+                let separator = separator_tokens
+                    .into_iter()
+                    .map(|tt| token_item(tt, spanned, &mut None))
+                    .collect::<Result<Vec<_>, _>>()?;
 
-                let mut loop_prologue = Some(TokenStream::new());
+                let mut inner = Some(Repetition {
+                    prologue: TokenStream::new(),
+                    used: Vec::new(),
+                });
+                let body = parse_items(g.stream(), spanned, &mut inner)?;
+                let mut loop_body = inner.expect("still set").prologue;
 
-                let body = parse_tokenstream(g.stream(), span, &mut loop_prologue, &mut Vec::new());
-
-                let mut loop_body = loop_prologue.unwrap();
-
-                // Make `if __quote_first {  } __quote_first = false;`
-                loop_body.extend::<[TokenTree; _]>([
-                    Ident::new("if", Span::call_site()).into(),
-                    Punct::new('!', Spacing::Alone).into(),
-                    Ident::new("__quote_first", Span::call_site()).into(),
-                    Group::new(proc_macro::Delimiter::Brace, first_loop).into(),
-                    Ident::new("__quote_first", Span::call_site()).into(),
-                    Punct::new('=', Spacing::Alone).into(),
-                    Ident::new("false", Span::call_site()).into(),
-                    Punct::new(';', Spacing::Alone).into(),
+                // `if !__quote_first { <separator> } __quote_first = false;`
+                loop_body.extend([
+                    ident("if"),
+                    punct('!'),
+                    ident("__quote_first"),
+                    group(Delimiter::Brace, emit(separator, spanned)),
+                    ident("__quote_first"),
+                    punct('='),
+                    ident("false"),
+                    punct(';'),
                 ]);
+                loop_body.extend(emit(body, spanned));
 
-                loop_body.extend(body);
-
-                // Make `let __quote_first = true; loop { {body} }`
-                output.extend::<[TokenTree; _]>([
-                    Ident::new("let", Span::call_site()).into(),
-                    Ident::new("mut", Span::call_site()).into(),
-                    Ident::new("__quote_first", Span::call_site()).into(),
-                    Punct::new('=', Spacing::Alone).into(),
-                    Ident::new("true", Span::call_site()).into(),
-                    Punct::new(';', Spacing::Alone).into(),
-                    Ident::new("loop", Span::call_site()).into(),
-                    Group::new(proc_macro::Delimiter::Brace, loop_body).into(),
+                // `let mut __quote_first = true; loop { <body> }`
+                let mut code = TokenStream::new();
+                code.extend([
+                    ident("let"),
+                    ident("mut"),
+                    ident("__quote_first"),
+                    punct('='),
+                    ident("true"),
+                    punct(';'),
+                    ident("loop"),
+                    group(Delimiter::Brace, loop_body),
                 ]);
-
-                continue;
+                items.push(Item::Code(code));
             }
-            _ => None,
-        } {
-            let mut args = TokenStream::new();
-
-            // Make `&{interpolation}, &mut tokens`
-            args.extend::<[TokenTree; _]>([
-                Punct::new('&', Spacing::Alone).into(),
-                interpolation,
-                Punct::new(',', Spacing::Alone).into(),
-                Punct::new('&', Spacing::Alone).into(),
-                Ident::new("mut", Span::call_site()).into(),
-                Ident::new("tokens", Span::call_site()).into(),
-            ]);
-
-            // Make `::parsyng::ToTokens::to_tokens({args});`
-            output.extend::<[TokenTree; _]>([
-                Ident::new("parsyng", Span::call_site()).into(),
-                Punct::new(':', Spacing::Joint).into(),
-                Punct::new(':', Spacing::Alone).into(),
-                Ident::new("ToTokens", Span::call_site()).into(),
-                Punct::new(':', Spacing::Joint).into(),
-                Punct::new(':', Spacing::Alone).into(),
-                Ident::new("to_tokens", Span::call_site()).into(),
-                Group::new(proc_macro::Delimiter::Parenthesis, args).into(),
-                Punct::new(';', Spacing::Alone).into(),
-            ]);
-        } else {
-            token_to_construction_code(
-                &mut output,
-                tt,
-                span,
-                in_repetition,
-                repetition_ident_already_used,
-            );
+            _ => items.push(token_item(tt, spanned, repetition)?),
         }
     }
-
-    if !in_repetition_bool {
-        output.extend(core::iter::once(Ident::new("tokens", Span::call_site())));
-    }
-
-    TokenTree::Group(Group::new(proc_macro::Delimiter::Brace, output)).into()
+    Ok(items)
 }
 
-/// Emits the statement(s) that push a single non-interpolated `tt` onto
-/// `tokens`, calling the matching `parsyng::quote::__private::push_*` helper
-/// for its kind (group, ident, punct or literal). Groups recurse through
-/// [`parse_tokenstream`] to build their own contents first.
-fn token_to_construction_code(
-    output: &mut TokenStream,
+/// The item rebuilding a single non-interpolated `tt`. Groups recurse
+/// through [`parse_items`]; a group without interpolations is encoded
+/// statically with its contents, otherwise it is built from a block with its
+/// own `tokens`.
+fn token_item(
     tt: TokenTree,
     spanned: bool,
-    in_repetition: &mut Option<TokenStream>,
-    repetition_ident_already_used: &mut Vec<String>,
-) {
-    let spanned_fn = if spanned { "_spanned" } else { "" };
-    let spanned_arg = if spanned { "span.clone(), " } else { "" };
-    match tt {
-        TokenTree::Group(group) => {
-            let inner = parse_tokenstream(
-                group.stream(),
-                spanned,
-                in_repetition,
-                repetition_ident_already_used,
-            );
-
-            let f =
-                format!("parsyng::quote::__private::push_group{spanned_fn}").parse::<TokenStream>();
-
-            let mut args = format!("parsyng::proc_macro::Delimiter::{:?}, ", group.delimiter())
-                .parse::<TokenStream>()
-                .unwrap();
-
-            args.extend(inner);
-
-            args.extend(format!(", {spanned_arg}&mut tokens").parse::<TokenStream>());
-
-            let args = TokenTree::Group(Group::new(proc_macro::Delimiter::Parenthesis, args));
-
-            output.extend(f);
-            output.extend(Some(args));
-            output.extend(Some(Punct::new(';', Spacing::Alone)));
-        }
-        TokenTree::Ident(ident) => {
-            let ident_string = ident.to_string();
-            if let Some(raw_ident) = ident_string.strip_prefix("r#") {
-                output.extend(
-                    format!(
-                        "parsyng::quote::__private::push_ident_raw{spanned_fn}(\"{raw_ident}\", {spanned_arg}&mut tokens);",
-                    )
-                    .parse::<TokenStream>(),
-                );
-            } else {
-                output.extend(
-                    format!(
-                        "parsyng::quote::__private::push_ident{spanned_fn}(\"{ident_string}\", {spanned_arg}&mut tokens);",
-                    )
-                    .parse::<TokenStream>(),
-                );
+    repetition: &mut Option<Repetition>,
+) -> Result<Item, TokenStream> {
+    Ok(match tt {
+        TokenTree::Group(g) => {
+            let items = parse_items(g.stream(), spanned, repetition)?;
+            if items.iter().all(|item| matches!(item, Item::Static(_))) {
+                let mut ops = vec![match g.delimiter() {
+                    Delimiter::Parenthesis => b'(',
+                    Delimiter::Bracket => b'[',
+                    Delimiter::Brace => b'{',
+                    Delimiter::None => b'n',
+                }];
+                for item in items {
+                    if let Item::Static(inner) = item {
+                        ops.extend_from_slice(&inner);
+                    }
+                }
+                ops.push(b')');
+                return Ok(Item::Static(ops));
             }
-        }
-        TokenTree::Punct(punct) => match punct.spacing() {
-            Spacing::Joint => output.extend(
-                format!(
-                    "parsyng::quote::__private::push_punct_joint{}('{}', {}&mut tokens);",
-                    spanned_fn,
-                    punct.as_char().escape_default(),
-                    spanned_arg,
-                )
-                .parse::<TokenStream>(),
-            ),
-            Spacing::Alone => output.extend(
-                format!(
-                    "parsyng::quote::__private::push_punct_alone{}('{}', {}&mut tokens);",
-                    spanned_fn,
-                    punct.as_char().escape_default(),
-                    spanned_arg,
-                )
-                .parse::<TokenStream>(),
-            ),
-        },
-        TokenTree::Literal(literal) => {
-            let literal = literal.to_string();
-            let literal_escaped = literal.escape_default();
-            output.extend(
-                format!(
-                    "parsyng::quote::__private::push_lit{spanned_fn}(\"{literal_escaped}\".parse::<parsyng::proc_macro::TokenStream>().unwrap(), {spanned_arg}&mut tokens);",
-                )
-                .parse::<TokenStream>(),
+            let mut args = TokenStream::new();
+            path(
+                &mut args,
+                &["proc_macro", "Delimiter", delimiter_name(g.delimiter())],
             );
+            args.extend([punct(',')]);
+            args.extend(stream_expression(items, spanned));
+            let helper = if spanned { "group_spanned" } else { "group" };
+            Item::Tree(call_private(helper, with_span(args, spanned)))
         }
+        TokenTree::Ident(i) => {
+            let name = i.to_string();
+            name.strip_prefix("r#")
+                .map_or_else(|| text_op(b'i', &name), |raw| text_op(b'r', raw))
+        }
+        TokenTree::Punct(p) => {
+            let tag = match p.spacing() {
+                Spacing::Joint => b'j',
+                Spacing::Alone => b'a',
+            };
+            // Rust punctuation characters are all ASCII.
+            let ch = u8::try_from(p.as_char()).expect("ASCII punctuation");
+            Item::Static(vec![tag, ch])
+        }
+        TokenTree::Literal(l) => text_op(b'l', &l.to_string()),
+    })
+}
+
+/// A `<tag><len><text>` record (see `parsyng::quote::__private`).
+fn text_op(tag: u8, text: &str) -> Item {
+    let len = u16::try_from(text.len()).expect("quote!: token longer than 65535 bytes");
+    let mut ops = Vec::with_capacity(3 + text.len());
+    ops.push(tag);
+    ops.extend_from_slice(&len.to_le_bytes());
+    ops.extend_from_slice(text.as_bytes());
+    Item::Static(ops)
+}
+
+const fn delimiter_name(delimiter: Delimiter) -> &'static str {
+    match delimiter {
+        Delimiter::Parenthesis => "Parenthesis",
+        Delimiter::Brace => "Brace",
+        Delimiter::Bracket => "Bracket",
+        Delimiter::None => "None",
     }
 }

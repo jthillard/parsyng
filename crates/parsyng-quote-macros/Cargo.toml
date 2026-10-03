@@ -16,4 +16,4 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dev-dependencies]
-parsyng = { path = "../..", features = ["proc-macro2"] }
+parsyng = { path = "../..", features = ["fallback"] }

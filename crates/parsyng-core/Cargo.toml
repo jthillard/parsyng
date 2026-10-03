@@ -13,12 +13,33 @@ keywords = ["macros", "proc", "quote"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [dependencies]
-parsyng-quote-macros = { version = "0.1.0", path = "../parsyng-quote-macros" }
-unicode-ident = "1"
+unicode-ident = { version = "1", optional = true }
 
 # Optional dependencies
-proc-macro2 = { version = "1", optional = true }
+parsyng-fallback = { version = "0.1.0", path = "../parsyng-fallback", optional = true }
+
+[dev-dependencies]
+parsyng-quote-macros = { version = "0.1.0", path = "../parsyng-quote-macros" }
 
 [features]
-proc-macro2 = ["dep:proc-macro2", "proc-macro2/span-locations"]
+default = ["parsing"]
+# The `Parse` machinery and the Rust AST. Without it, only `quote!`,
+# `quote_spanned!`, `format_ident!` and `ToTokens` are available, which
+# compiles much faster.
+parsing = ["dep:unicode-ident"]
+# The whole Rust grammar: expressions, statements, patterns, function
+# signatures, every item kind ([`ast::item::Item`]) and whole source files.
+# Without it, the AST covers what derive macros need: types, paths,
+# generics, attributes, visibility, literals, structs and enums.
+full = ["parsing"]
+# Use `parsyng-fallback`, a pure-Rust implementation of the token types,
+# instead of the compiler's `proc_macro`: for tests and other code running
+# outside of macro expansion. Enabling it in a proc-macro crate works, but
+# loses spans.
+fallback = ["dep:parsyng-fallback"]
+# `Debug` implementations for the AST and combinator types.
+extra-traits = []
 debug-pretty = []
+
+[package.metadata.docs.rs]
+all-features = true

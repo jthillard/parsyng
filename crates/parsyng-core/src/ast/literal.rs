@@ -34,7 +34,8 @@ use crate::{
 /// suffix (if present) matches their own type name.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#integer-literals>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LiteralNumber {
     content: String,
     prefix: Range<usize>,
@@ -45,7 +46,8 @@ pub struct LiteralNumber {
 /// A floating-point literal, e.g. `1.5`, `1e10`, `1.0f64`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#floating-point-literals>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LiteralFloat {
     content: String,
     suffix: Range<usize>,
@@ -55,7 +57,8 @@ pub struct LiteralFloat {
 /// Any literal token.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/tokens.html#literals>
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Literal {
     /// An integer literal.
     ///
@@ -107,6 +110,7 @@ impl LiteralNumber {
     /// A decimal literal with no prefix or suffix, made of `digits` (which
     /// must all be ASCII digits) — used to split the float token `0.1` of
     /// `x.0.1` into two tuple indices.
+    #[cfg(feature = "full")]
     pub(crate) fn from_digits(digits: &str, span: Span) -> Self {
         Self {
             content: digits.to_owned(),
@@ -179,13 +183,13 @@ unsigned_integer_impls! {
 
 impl Parse for Literal {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        let Some(literal) = input.peek_literal() else {
+        let Some(text) = input.peek_literal_str() else {
             return Err(Diagnostics::new_error_spanned(
                 "Expected literal",
                 input.span(),
             ));
         };
-        match QuotedKind::of(&literal.to_string()) {
+        match QuotedKind::of(text) {
             Some(QuotedKind::Str) => input.parse().map(Self::Str),
             Some(QuotedKind::ByteStr) => input.parse().map(Self::ByteStr),
             Some(QuotedKind::CStr) => input.parse().map(Self::CStr),
@@ -654,24 +658,17 @@ fn check_suffix(suffix: &str) -> core::result::Result<String, String> {
 fn parse_quoted<T>(
     input: &mut ParseBuffer,
     kind: QuotedKind,
-    expected: &str,
+    expected: &'static str,
     build: impl FnOnce(&str) -> core::result::Result<T, String>,
 ) -> Result<(proc_macro::Literal, T)> {
-    let Some(literal) = input.peek_literal() else {
-        return Err(Diagnostics::new_error_spanned(
-            format!("Expected {expected}"),
-            input.span(),
-        ));
+    let span = input.span();
+    let Some(text) = input.peek_literal_str() else {
+        return Err(Diagnostics::new_error_spanned(expected, span));
     };
-    let text = literal.to_string();
-    let span = literal.span();
-    if QuotedKind::of(&text) != Some(kind) {
-        return Err(Diagnostics::new_error_spanned(
-            format!("Expected {expected}"),
-            span,
-        ));
+    if QuotedKind::of(text) != Some(kind) {
+        return Err(Diagnostics::new_error_spanned(expected, span));
     }
-    let value = build(&text).map_err(|error| Diagnostics::new_error_spanned(error, span))?;
+    let value = build(text).map_err(|error| Diagnostics::new_error_spanned(error, span))?;
     let Some(token) = input.literal() else {
         unreachable!("a literal was just peeked")
     };
@@ -686,7 +683,8 @@ macro_rules! quoted_literal {
         |$text:ident| $build:expr
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone)]
+        #[derive(Clone)]
+        #[cfg_attr(feature = "extra-traits", derive(Debug))]
         pub struct $name {
             token: proc_macro::Literal,
             value: $value_ty,
@@ -721,7 +719,7 @@ macro_rules! quoted_literal {
         impl Parse for $name {
             fn parse(input: &mut ParseBuffer) -> Result<Self> {
                 let (token, (value, suffix)) =
-                    parse_quoted(input, QuotedKind::$kind, $expected, |$text| $build)?;
+                    parse_quoted(input, QuotedKind::$kind, concat!("Expected ", $expected), |$text| $build)?;
                 Ok(Self { token, value, suffix })
             }
         }
@@ -833,15 +831,9 @@ impl Peek for char {}
 impl Parse for bool {
     #[allow(clippy::cmp_owned)]
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        if input
-            .ident_and(|ident| ident.to_string() == "true")
-            .is_some()
-        {
+        if input.ident_str_and(|text| text == "true").is_some() {
             Ok(true)
-        } else if input
-            .ident_and(|ident| ident.to_string() == "false")
-            .is_some()
-        {
+        } else if input.ident_str_and(|text| text == "false").is_some() {
             Ok(false)
         } else {
             Err(Diagnostics::new_error_spanned(

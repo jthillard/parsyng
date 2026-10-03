@@ -16,7 +16,8 @@ use crate::{
 /// [`ItemUse`](crate::ast::item::ItemUse) for that): `use foo::bar;`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UseItem {
     use_token: Use,
     tree: UseTree,
@@ -26,7 +27,8 @@ pub struct UseItem {
 /// One node of a `use` tree.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#use-paths>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum UseTree {
     /// `segment::rest`.
     Path(UsePath),
@@ -49,7 +51,8 @@ pub enum UseTree {
 /// One `segment::` prefix of a [`UseTree::Path`], with the remaining tree.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#use-paths>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UsePath {
     ident: Ident,
     colon: PathSep,
@@ -59,7 +62,8 @@ pub struct UsePath {
 /// A `foo as bar` rename inside a `use` tree.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#as-renames>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UseRename {
     ident: Ident,
     as_token: As,
@@ -69,7 +73,8 @@ pub struct UseRename {
 /// A brace-delimited, comma-separated group of `use` sub-trees: `{a, b, c}`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/use-declarations.html#brace-syntax>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UseGroup {
     group: Braced<Punctuated<UseTree, Comma>>,
 }

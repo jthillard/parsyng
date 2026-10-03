@@ -1,31 +1,35 @@
 use crate as parsyng;
 
-use crate::{ToTokens, quote};
+use crate::ToTokens;
+use parsyng_quote_macros::quote;
 
+#[cfg(feature = "full")]
+use crate::ast::{
+    crate_source::Crate,
+    expression::{
+        ArrayElements, ArrayExpression, AwaitExpression, BlockExpression, BreakExpression,
+        CallExpression, ContinueExpression, ElseExpression, Expression, ExpressionWithBlock,
+        ExpressionWithoutBlock, FieldExpression, GroupedExpression, IfExpression, IndexExpression,
+        LoopExpression, RangeExpression, ReturnExpression, TupleExpression, TupleIndexExpression,
+        UnderscoreExpression, UnsafeBlockExpression,
+    },
+    item::{associated::*, constant::ConstantItem, implementation::Implementation},
+    statements::Statement,
+};
 use crate::{
     ast::{
-        crate_source::Crate,
         delimiter::{Braced, Bracketed, Parenthesized},
-        expression::{
-            ArrayElements, ArrayExpression, AwaitExpression, BlockExpression, BreakExpression,
-            CallExpression, ContinueExpression, ElseExpression, Expression, ExpressionWithBlock,
-            ExpressionWithoutBlock, FieldExpression, GroupedExpression, IfExpression,
-            IndexExpression, LoopExpression, RangeExpression, ReturnExpression, TupleExpression,
-            TupleIndexExpression, UnderscoreExpression, UnsafeBlockExpression,
-        },
         item::{
             DeriveInput, GenericParam, GenericParams, Lifetime, LifetimeBounds, LifetimeParam,
             LifetimeWhereClauseItem, TraitBound, TypeBoundWhereClauseItem, TypeParam,
-            TypeParamBound, TypeParamBounds, WhereClause, WhereClauseItem, associated::*,
-            constant::ConstantItem, enum_item::EnumVariantFields, implementation::Implementation,
-            r#struct::*,
+            TypeParamBound, TypeParamBounds, WhereClause, WhereClauseItem,
+            enum_item::EnumVariantFields, r#struct::*,
         },
         literal::{
             Literal, LiteralByte, LiteralByteStr, LiteralCStr, LiteralChar, LiteralFloat,
             LiteralNumber, LiteralStr,
         },
         path::{GenericArg, GenericArgs, SimplePath, TypePathSegment},
-        statements::Statement,
         r#type::{Type, TypePath},
         visibility::Visibility,
     },
@@ -64,9 +68,9 @@ fn token_stream_nodes() {
 
 #[test]
 fn delimiter_nodes() {
-    check::<Bracketed<Expression>>(quote! { [foo] });
-    check::<Braced<Vec<Statement>>>(quote! { { ; } });
-    check::<Parenthesized<Expression>>(quote! { (foo) });
+    check::<Bracketed<Type>>(quote! { [foo] });
+    check::<Braced<Vec<crate::proc_macro::Ident>>>(quote! { { a b } });
+    check::<Parenthesized<Type>>(quote! { (foo) });
 }
 
 #[test]
@@ -272,6 +276,21 @@ fn derive_input_nodes() {
 }
 
 #[test]
+fn generic_defaults() {
+    let input = check::<DeriveInput>(quote! {
+        struct S<'a, T: Clone + 'a = u8, const N: usize = 2, const M: u8 = { 1 + 1 }>(&'a [T; N]);
+    });
+    // Defaults are not allowed in an `impl<...>` header.
+    let (impl_generics, type_generics, _) = input.split_generics_for_impl();
+    let generated = quote! { impl #impl_generics Trait for S #type_generics {} };
+    assert_eq!(
+        generated.to_string().replace(' ', ""),
+        "impl<'a,T:Clone+'a,constN:usize,constM:u8,>TraitforS<'a,T,N,M,>{}",
+    );
+    check::<GenericArgs>(quote! { <3, -1, { N + 1 }> });
+}
+
+#[test]
 fn path_and_type_nodes() {
     check::<SimplePath>(quote! { ::core::fmt });
     check::<TypePathSegment>(quote! { Vec::<u8> });
@@ -321,6 +340,7 @@ fn generic_and_where_nodes() {
     check::<WhereClause>(quote! { where 'a: 'b, T: Foo<'a> });
 }
 
+#[cfg(feature = "full")]
 #[test]
 fn item_nodes() {
     let field = check::<StructField>(quote! { pub x: u8 });
@@ -350,6 +370,7 @@ fn item_nodes() {
     assert!(matches!(item_impl, crate::ast::item::Item::Impl(_)));
 }
 
+#[cfg(feature = "full")]
 #[test]
 fn expression_nodes() {
     let expr = check::<Expression>(quote! { foo });
@@ -395,6 +416,7 @@ fn expression_nodes() {
     check::<GroupedExpression>(quote! { (foo) });
 }
 
+#[cfg(feature = "full")]
 #[test]
 fn statement_and_crate_nodes() {
     let s1 = check::<Statement>(quote! { ; });

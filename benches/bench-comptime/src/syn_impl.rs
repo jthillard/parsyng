@@ -55,3 +55,14 @@ pub fn heap_size(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+#[cfg(feature = "parse-bench")]
+pub fn parse_file(input: TokenStream) -> TokenStream {
+    match syn::parse::<syn::File>(input) {
+        Ok(file) => {
+            core::hint::black_box(file);
+            TokenStream::new()
+        }
+        Err(e) => e.to_compile_error().into(),
+    }
+}

@@ -20,7 +20,8 @@ use crate::{
 /// that.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/modules.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ModItem {
     mod_token: Mod,
     ident: Ident,

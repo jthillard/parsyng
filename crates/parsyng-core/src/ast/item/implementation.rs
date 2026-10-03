@@ -21,7 +21,8 @@ use crate::{
 /// for Foo`) and `None` for an inherent impl.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/implementations.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Implementation {
     unsafety: Option<Unsafe>,
     impl_token: Impl,

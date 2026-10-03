@@ -1,5 +1,8 @@
 test:
-    cargo test --package parsyng-core --features proc-macro2
+    cargo test --package parsyng-fallback
+    cargo test --package parsyng-core --features fallback,full,extra-traits
+    cargo test --package parsyng-core --features fallback
+    cargo check --package parsyng --no-default-features
 
 # Extra arguments passed to every hyperfine run, e.g. `HYPERFINE_ARGS="--runs 3" just bench`.
 hyperfine_args := env("HYPERFINE_ARGS", "")
@@ -18,13 +21,33 @@ bench-runtime:
     cargo bench -p parsyng-bench-runtime
 
 # Clean build of a proc-macro crate implementing the same derive with each library.
-bench-comptime: (__comptime "empty") (__comptime "small") (__comptime "big") (__comptime_impl "big" "big,proc-macro2" "big-proc-macro2")
+bench-comptime: (__comptime "empty") (__comptime "small") (__comptime "big") (__comptime_impl "big" "big,fallback" "big-fallback")
 
 # Clean build of a proc-macro crate expanding the same `quote!` template with each library.
 bench-quote-comptime: (__quote_comptime "empty") (__quote_comptime "small") (__quote_comptime "big")
 
 # Build of a crate with 200 `#[derive(HeapSize)]`, the macro itself being already built.
-bench-expansion: (__expansion "") (__expansion "--release")
+bench-expansion: (__expansion "") (__expansion "--release") bench-parse
+
+# Parsing ~75 KB of real-world Rust inside a proc macro, on the compiler's real `proc_macro`.
+bench-parse:
+    @echo -e {{ BOLD }}{{ RED }}"\n============ In-compiler parse time ============\n"{{ NORMAL }}
+    @mkdir -p {{ results }}
+    CARGO_TARGET_DIR={{ target }}/bench-parse hyperfine {{ hyperfine_args }} \
+        --export-markdown {{ results }}/expansion-parse.md \
+        --prepare 'cargo build -q -p bench-parse --no-default-features --features syn && cargo clean -q -p bench-parse' \
+        --prepare 'cargo build -q -p bench-parse --no-default-features --features moxy && cargo clean -q -p bench-parse' \
+        --prepare 'cargo build -q -p bench-parse --no-default-features --features parsyng && cargo clean -q -p bench-parse' \
+        -n syn 'cargo build -q -p bench-parse --no-default-features --features syn' \
+        -n moxy 'cargo build -q -p bench-parse --no-default-features --features moxy' \
+        -n parsyng 'cargo build -q -p bench-parse --no-default-features --features parsyng'
+
+# Profile a runtime parse bench (e.g. `just profile-parse parse/derive_input/parsyng`); needs perf.
+profile-parse filter:
+    perf record -g -o {{ target }}/perf.data -- \
+        $(cargo bench -q -p parsyng-bench-runtime --bench parse --no-run --message-format=json | jq -r 'select(.executable != null) | .executable') \
+        --bench --profile-time 5 '{{ filter }}' > /dev/null
+    perf report -i {{ target }}/perf.data --no-children --percent-limit 1 --stdio 2>/dev/null | grep -E '^ +[0-9.]+%' | head -40
 
 __comptime size: (__comptime_impl size size size)
 
@@ -50,7 +73,7 @@ __quote_comptime_profile size profile:
         -n quote 'cargo build -q {{ profile }} -p bench-quote-comptime --features quote,{{ size }}' \
         -n unsynn 'cargo build -q {{ profile }} -p bench-quote-comptime --features unsynn,{{ size }}' \
         -n moxy 'cargo build -q {{ profile }} -p bench-quote-comptime --features moxy,{{ size }}' \
-        -n parsyng 'cargo build -q {{ profile }} -p bench-quote-comptime --features parsyng-core,{{ size }}'
+        -n parsyng 'cargo build -q {{ profile }} -p bench-quote-comptime --features parsyng,{{ size }}'
 
 __expansion profile:
     @echo -e {{ BOLD }}{{ RED }}"\n============ Macro expansion time {{ profile }} ============\n"{{ NORMAL }}

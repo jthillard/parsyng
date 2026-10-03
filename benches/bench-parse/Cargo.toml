@@ -1,0 +1,18 @@
+[package]
+name = "bench-parse"
+description = "Parses ~75 KB of real-world Rust inside a proc macro, to bench parsing on the compiler's `proc_macro` with syn, moxy and parsyng"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+repository = "https://github.com/supersurviveur/parsyng"
+
+[dependencies]
+bench-comptime = { path = "../bench-comptime", features = ["parse-bench"] }
+
+[features]
+# One library must be enabled; the bench recipes use `--no-default-features`.
+default = ["parsyng"]
+syn = ["bench-comptime/syn"]
+moxy = ["bench-comptime/moxy"]
+parsyng = ["bench-comptime/parsyng"]

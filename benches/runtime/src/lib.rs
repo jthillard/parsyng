@@ -226,7 +226,7 @@ where
     #[serde(default)]
     pub enabled: bool,
     count: [u8; N],
-    map: std::collections::HashMap<String, Option<Box<dyn Fn() -> T + Send>>>,
+    map: std::collections::HashMap<String, Option<Box<dyn Fn(T) -> T + Send>>>,
     pub cb: fn(&mut T, usize) -> Result<(), String>,
     inner: Option<Vec<(u32, &'a [T])>>,
     pub id: u64,

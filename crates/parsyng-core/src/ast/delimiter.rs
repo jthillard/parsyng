@@ -25,7 +25,8 @@ macro_rules! make_delimiters {
         $(
 
         #[doc = concat!("`", $l, "T", $r, "`: a `T` surrounded by a matching `", $l, "` `", $r, "` pair.")]
-        #[derive(Clone, Debug)]
+        #[derive(Clone)]
+        #[cfg_attr(feature = "extra-traits", derive(Debug))]
         pub struct $name<T> {
             group: Group,
             content: T,
@@ -71,9 +72,8 @@ macro_rules! make_delimiters {
 
         impl<T: Parse> Parse for $name<T> {
             fn parse(input: &mut ParseBuffer) -> Result<Self> {
-                match input.group() {
-                    Some(group) if group.delimiter() == Delimiter::$delimiter => {
-                        let mut stream = ParseBuffer::new(group.stream());
+                match input.delimited(Delimiter::$delimiter) {
+                    Some((group, mut stream)) => {
                         let content = stream.parse::<T>()?;
 
                         if stream.is_empty() {

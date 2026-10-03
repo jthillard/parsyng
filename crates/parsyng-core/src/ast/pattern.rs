@@ -27,7 +27,8 @@ use crate::{
 /// A pattern. See the [module docs](self) for coverage.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Pattern {
     /// A binding pattern, e.g. `ref mut name`.
     ///
@@ -77,7 +78,8 @@ pub enum Pattern {
 /// A binding pattern, e.g. `ref mut name`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#identifier-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatIdent {
     by_ref: Option<Ref>,
     mutability: Option<Mut>,
@@ -149,12 +151,8 @@ impl Pattern {
         if let Ok(literal) = input.try_parse() {
             return Ok(Self::Literal(literal));
         }
-        if let Some(ident) = input.peek_ident() {
-            #[allow(clippy::cmp_owned)]
-            let is_ref_or_mut = ident.to_string() == "ref" || ident.to_string() == "mut";
-            if is_ref_or_mut {
-                return Ok(Self::Ident(input.parse()?));
-            }
+        if matches!(input.peek_ident_str(), Some("ref" | "mut")) {
+            return Ok(Self::Ident(input.parse()?));
         }
         let path: SimplePath = input.parse()?;
         if let Some(group) = input.peek_group() {
@@ -191,7 +189,8 @@ impl Pattern {
 /// The wildcard pattern `_`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#wildcard-pattern>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatWildcard {
     underscore: Ident,
 }
@@ -199,7 +198,8 @@ pub struct PatWildcard {
 /// A tuple pattern, e.g. `(a, b, c)`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#tuple-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatTuple {
     elems: Parenthesized<Punctuated<Pattern, Comma>>,
 }
@@ -207,7 +207,8 @@ pub struct PatTuple {
 /// A reference pattern, e.g. `&mut pat`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#reference-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatRef {
     and_token: And,
     mutability: Option<Mut>,
@@ -217,7 +218,8 @@ pub struct PatRef {
 /// A literal pattern, e.g. `1`, `-1.5`, `"foo"` or `b'a'`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#literal-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatLiteral {
     neg: Option<Minus>,
     literal: Literal,
@@ -226,7 +228,8 @@ pub struct PatLiteral {
 /// A multi-segment path pattern, e.g. `Foo::Bar`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#path-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatPath {
     path: SimplePath,
 }
@@ -234,7 +237,8 @@ pub struct PatPath {
 /// A tuple-struct pattern: `Path(a, b, ..)`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#tuple-struct-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatTupleStruct {
     path: SimplePath,
     elems: Parenthesized<Punctuated<Pattern, Comma>>,
@@ -243,7 +247,8 @@ pub struct PatTupleStruct {
 /// A struct pattern: `Path { a, b: pat, .. }`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#struct-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatStruct {
     path: SimplePath,
     fields: Braced<Punctuated<StructPatternField, Comma>>,
@@ -252,7 +257,8 @@ pub struct PatStruct {
 /// One field inside a [`PatStruct`]'s braces.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#struct-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum StructPatternField {
     /// `field: pattern`.
     Named(Ident, Colon, Pattern),
@@ -265,7 +271,8 @@ pub enum StructPatternField {
 /// The rest pattern `..`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#rest-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatRest {
     dot_dot: DotDot,
 }
@@ -273,7 +280,8 @@ pub struct PatRest {
 /// `pat | pat | ...` (at least two alternatives).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#or-patterns>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatOr {
     first: Pattern,
     alternatives: Vec<(Or, Pattern)>,
@@ -301,15 +309,10 @@ impl Parse for PatIdent {
 
 impl Parse for PatWildcard {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        let underscore: Ident = input.parse()?;
-        #[allow(clippy::cmp_owned)]
-        if underscore.to_string() == "_" {
+        if let Some(underscore) = input.ident_str_and(|text| text == "_") {
             Ok(Self { underscore })
         } else {
-            Err(Diagnostics::new_error_spanned(
-                "Expected `_`",
-                underscore.span(),
-            ))
+            Err(Diagnostics::new_error_spanned("Expected `_`", input.span()))
         }
     }
 }

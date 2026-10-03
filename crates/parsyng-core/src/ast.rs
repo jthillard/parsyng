@@ -28,6 +28,14 @@
 //! Unsupported syntax is reported as a regular [`Parse`](crate::parse::Parse)
 //! error spanned at the offending token; it never panics.
 //!
+//! Expressions, statements, patterns, function signatures, the [`item::Item`]
+//! enum (and every item kind but structs, enums and macro invocations) and
+//! whole source files need the `full` feature. Without it, the AST covers
+//! what derive macros need: types, paths, generics, `where` clauses,
+//! attributes, visibility, literals, structs, enums and
+//! [`item::DeriveInput`]. `Debug` implementations need the `extra-traits`
+//! feature.
+//!
 //! # Module map
 //!
 //! | Module | Contents |
@@ -65,8 +73,10 @@
 //! [`item::associated`].
 
 pub mod attributes;
+#[cfg(feature = "full")]
 pub mod crate_source;
 pub mod delimiter;
+#[cfg(feature = "full")]
 pub mod expression;
 pub mod generics;
 /// Identifier classification helpers (crate-private; no public API).
@@ -74,13 +84,16 @@ pub mod identifiers;
 pub mod item;
 pub mod literal;
 pub mod path;
+#[cfg(feature = "full")]
 pub mod pattern;
+#[cfg(feature = "full")]
 pub mod signature;
+#[cfg(feature = "full")]
 pub mod statements;
 pub mod token_stream;
 pub mod tokens;
 pub mod r#type;
 pub mod visibility;
 
-#[cfg(all(test, feature = "proc-macro2"))]
+#[cfg(all(test, feature = "fallback"))]
 mod tests;

@@ -19,7 +19,8 @@ use crate::{
 /// [`ItemStatic`](crate::ast::item::ItemStatic) for that.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/static-items.html>
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StaticItem {
     static_token: tokens::Static,
     mut_token: Option<Mut>,

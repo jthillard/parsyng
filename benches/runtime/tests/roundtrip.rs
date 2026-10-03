@@ -2,7 +2,7 @@
 //! syn, parsyng and moxy must all re-emit the same tokens they parsed.
 
 use parsyng_bench_runtime::{FILES, common_subset};
-use parsyng_core::ast::crate_source::Crate;
+use parsyng::ast::crate_source::Crate;
 
 /// Normalise token spacing by re-lexing through proc-macro2.
 fn normalize(src: &str) -> String {
@@ -18,8 +18,8 @@ fn parsers_roundtrip_common_subset() {
         let syn_out = quote::ToTokens::into_token_stream(syn::parse_file(&subset).unwrap());
         assert_eq!(normalize(&syn_out.to_string()), expected, "syn on {name}");
 
-        let parsyng_out = parsyng_core::ToTokens::to_token_stream(
-            &parsyng_core::parse::parse_all::<Crate>(subset.parse().unwrap()).unwrap(),
+        let parsyng_out = parsyng::ToTokens::to_token_stream(
+            &parsyng::parse::parse_all::<Crate>(subset.parse().unwrap()).unwrap(),
         );
         assert_eq!(normalize(&parsyng_out.to_string()), expected, "parsyng on {name}");
 
