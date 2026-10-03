@@ -1,17 +1,17 @@
-//! The [`ParseBuffer`](crate::parse::ParseBuffer) cursor and the
-//! [`Parse`](crate::parse::Parse)/[`Peek`](crate::parse::Peek) traits it
+//! The [`ParseBuffer`] cursor and the
+//! [`Parse`]/[`Peek`] traits it
 //! drives.
 //!
-//! [`ParseBuffer`](crate::parse::ParseBuffer) wraps a
-//! [`TokenStream`](crate::proc_macro::TokenStream) iterator with lookahead
-//! and gives every [`Parse`](crate::parse::Parse) implementation a uniform
+//! [`ParseBuffer`] wraps a
+//! [`TokenStream`] iterator with lookahead
+//! and gives every [`Parse`] implementation a uniform
 //! way to consume tokens, try alternatives without committing on failure
 //! ([`ParseBuffer::try_parse`](crate::parse::ParseBuffer::try_parse)), and
-//! report errors with a useful [`Span`](crate::proc_macro::Span). Most code
+//! report errors with a useful [`Span`]. Most code
 //! using `parsyng` only ever
 //! touches [`ParseBuffer::new`](crate::parse::ParseBuffer::new) and
 //! [`ParseBuffer::parse`](crate::parse::ParseBuffer::parse); the `peek_*`
-//! and `*_and` methods exist for [`Parse`](crate::parse::Parse)
+//! and `*_and` methods exist for [`Parse`]
 //! implementations themselves to decide between grammar alternatives before
 //! committing to one.
 
@@ -224,6 +224,24 @@ impl Iterator for ParseBuffer {
             }
             None => None,
         }
+    }
+}
+
+/// Parse a whole token stream as `T`, failing if any tokens are left over.
+///
+/// This is what the `#[parsyng::proc_macro]` family of helper attributes use
+/// to parse their input.
+///
+/// # Errors
+/// Returns an error if parsing fails, or if `T` does not consume every
+/// token.
+pub fn parse_all<T: Parse>(tokens: TokenStream) -> Result<T> {
+    let mut input = ParseBuffer::new(tokens);
+    let value = input.parse()?;
+    if input.is_empty() {
+        Ok(value)
+    } else {
+        Err(Diagnostics::new_error_spanned("Unexpected token", input.span()))
     }
 }
 

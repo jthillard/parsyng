@@ -2,8 +2,9 @@
 //! `match` arm.
 //!
 //! Coverage: binding (`ref mut name`), wildcard (`_`), tuple, reference
-//! (`&`/`&mut`), literal (numeric only — matches the same gap documented on
-//! [`ast::literal::Literal`](crate::ast::literal::Literal)), path
+//! (`&`/`&mut`), literal (any
+//! [`ast::literal::Literal`](crate::ast::literal::Literal), optionally
+//! negated), path
 //! (`Foo::Bar`), tuple-struct (`Foo(a, b)`), struct (`Foo { a, b: pat, ..
 //! }`), rest (`..`), and `|` alternation. Not covered: slice patterns,
 //! range patterns (`1..=5`), and box patterns.
@@ -44,7 +45,7 @@ pub enum Pattern {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#reference-patterns>
     Ref(PatRef),
-    /// A numeric literal pattern, e.g. `1`, `-1.5`.
+    /// A literal pattern, e.g. `1`, `-1.5`, `"foo"` or `b'a'`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#literal-patterns>
     Literal(PatLiteral),
@@ -213,7 +214,7 @@ pub struct PatRef {
     pat: Box<Pattern>,
 }
 
-/// A numeric literal pattern, e.g. `1`, `-1.5`.
+/// A literal pattern, e.g. `1`, `-1.5`, `"foo"` or `b'a'`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#literal-patterns>
 #[derive(Clone, Debug)]
@@ -541,9 +542,9 @@ mod tests {
 
     #[test]
     fn test_pattern_literal() {
-        // literals inside `quote!` are wrapped in an invisible group (see
-        // `ast::tests::literal_nodes`), so use a raw string here instead.
-        let lit = check::<Pattern>("-1".parse().unwrap());
+        let lit = check::<Pattern>(quote! { -1 });
+        assert!(matches!(lit, Pattern::Literal(_)));
+        let lit = check::<Pattern>(quote! { "foo" });
         assert!(matches!(lit, Pattern::Literal(_)));
     }
 

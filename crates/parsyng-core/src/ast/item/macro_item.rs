@@ -10,7 +10,7 @@ use crate::{
     },
     error::Diagnostics,
     parse::Parse,
-    proc_macro::{Group, Ident},
+    proc_macro::{Group, Ident, Span},
 };
 
 /// A `macro_rules! name { ... }` declarative macro definition. The body is
@@ -56,6 +56,14 @@ pub struct MacroInvocationItem {
     bang: Not,
     body: Group,
     semi: Option<Semicolon>,
+}
+
+impl MacroInvocationItem {
+    /// The span of this invocation's path.
+    #[must_use]
+    pub fn span(&self) -> Span {
+        self.path.span()
+    }
 }
 
 impl Parse for MacroRulesItem {

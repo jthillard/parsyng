@@ -1,11 +1,19 @@
 use simple_use_macros::Simple;
 use simple_use_macros::add_one;
+use simple_use_macros::{echo, nothing, repeat};
 use simple_use_macros::simple_macro;
 use simple_use_macros::simple_macro_attribute;
 
 fn main() {
     println!("Hello, world!");
     println!("{}", add_one!(5));
+
+    let name = "parsyng";
+    let (number, text) = (echo!(42), echo!("text"));
+    assert_eq!((number, text), (42, "text"));
+    assert_eq!(echo!(name), "parsyng");
+    nothing!();
+    assert_eq!(repeat!("ab", 3), "ababab");
 
     simple_macro! {
         pub(in ::a::test) struct Foo<'a, 'b: '_ + 'static, T: 'a + Test<T> + Bar + ?Sized + (for<T> T)> where 'a: 'b, T: Add {

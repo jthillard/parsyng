@@ -2,6 +2,7 @@
 
 use crate::ToTokens;
 
+use crate::ast::generics::{ImplGenerics, TypeGenerics};
 use crate::{
     ast::{
         attributes::{Attribute, parse_outer_attributes},
@@ -71,6 +72,89 @@ impl EnumItem {
     #[must_use]
     pub const fn ident(&self) -> &Ident {
         &self.ident
+    }
+    /// This enum's generic parameters, if any.
+    #[must_use]
+    pub const fn generic_parameters(&self) -> Option<&GenericParams> {
+        self.generics.as_ref()
+    }
+    /// Mutable access to this enum's generic parameters, for adding trait
+    /// bounds before re-emitting them (see
+    /// [`TypeParamBounds::push`](crate::ast::item::TypeParamBounds::push)).
+    pub const fn generic_parameters_mut(&mut self) -> Option<&mut GenericParams> {
+        self.generics.as_mut()
+    }
+    /// This enum's `where` clause, if any.
+    #[must_use]
+    pub const fn where_clause(&self) -> Option<&WhereClause> {
+        self.where_clause.as_ref()
+    }
+    /// Split this enum's generics into the `impl<...>`, `Type<...>` and
+    /// `where ...` pieces needed to build a trait impl.
+    #[must_use]
+    pub fn split_generics_for_impl(
+        &self,
+    ) -> (
+        Option<ImplGenerics<'_>>,
+        Option<TypeGenerics<'_>>,
+        Option<&WhereClause>,
+    ) {
+        (
+            self.generic_parameters().map(Into::into),
+            self.generic_parameters().map(Into::into),
+            self.where_clause.as_ref(),
+        )
+    }
+    /// This enum's variants.
+    #[must_use]
+    pub fn variants(&self) -> &Punctuated<EnumVariant, Comma> {
+        &self.variants
+    }
+    /// Mutable access to this enum's variants.
+    pub fn variants_mut(&mut self) -> &mut Punctuated<EnumVariant, Comma> {
+        &mut self.variants
+    }
+}
+
+impl EnumVariant {
+    /// This variant's name.
+    #[must_use]
+    pub const fn ident(&self) -> &Ident {
+        &self.ident
+    }
+    /// This variant's outer attributes.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+    /// This variant's fields.
+    #[must_use]
+    pub const fn fields(&self) -> &EnumVariantFields {
+        &self.fields
+    }
+    /// The tokens of this variant's explicit discriminant (`= <expr>`), if
+    /// any.
+    #[must_use]
+    pub fn discriminant(&self) -> Option<&TokenStreamUntilComma> {
+        self.discriminant.as_ref().map(|(_, discriminant)| discriminant)
+    }
+}
+
+impl EnumField {
+    /// This field's name.
+    #[must_use]
+    pub const fn ident(&self) -> &Ident {
+        &self.ident
+    }
+    /// This field's outer attributes.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+    /// This field's type.
+    #[must_use]
+    pub const fn ty(&self) -> &Type {
+        &self.ty
     }
 }
 

@@ -251,6 +251,14 @@ impl<const K: u8> Parse for RustKeyword<K> {
         })
     }
 }
+impl<const K: u8> RustKeyword<K> {
+    /// This keyword's span.
+    #[must_use]
+    pub fn span(&self) -> Span {
+        self.ident.span()
+    }
+}
+
 impl<const K: u8> Peek for RustKeyword<K> {}
 impl<const K: u8> ToTokens for RustKeyword<K> {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {

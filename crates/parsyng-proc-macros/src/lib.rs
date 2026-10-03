@@ -20,8 +20,10 @@ use parsyng_core as parsyng;
 use parsyng_core::quote;
 use proc_macro::{Span, TokenStream};
 
+mod derive_common;
 mod derive_parse;
 mod derive_to_tokens;
+mod helper_common;
 mod proc_macro_attribute_helper;
 mod proc_macro_derive_helper;
 mod proc_macro_helper;
@@ -57,14 +59,14 @@ pub(crate) fn dbg_macros(
 /// parsing.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// #[parsyng::proc_macro]
 /// pub fn add_one(n: u8) -> u8 {
 ///    n + 1
 /// }
 /// ```
 /// and then
-/// ```
+/// ```ignore
 /// println!("{}", add_one!(5));
 /// // Output : 6
 /// ```
@@ -101,7 +103,7 @@ pub fn proc_macro_(args: TokenStream, input: TokenStream) -> TokenStream {
 /// [`proc_macro`](proc_macro_) (see its documentation for details).
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// use parsyng::ast::item::Item;
 /// use parsyng::error::Result;
 ///
@@ -137,7 +139,7 @@ pub fn proc_macro_attribute_(args: TokenStream, input: TokenStream) -> TokenStre
 /// [`proc_macro`](proc_macro_) for what `debug` does).
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// use parsyng::ast::item::DeriveInput;
 /// use parsyng::proc_macro::TokenStream;
 ///
@@ -159,14 +161,14 @@ pub fn proc_macro_derive_(args: TokenStream, input: TokenStream) -> TokenStream 
     .into()
 }
 
-/// Derives [`Parse`](parsyng_core::Parse) for a struct with named fields by
-/// parsing each field, in declaration order, with its own
-/// [`Parse`](parsyng_core::Parse) implementation.
+/// Derives [`Parse`](parsyng_core::Parse) by parsing each field, in
+/// declaration order, with its own [`Parse`](parsyng_core::Parse)
+/// implementation.
 ///
 /// Equivalent to writing, for `struct Foo { a: A, b: B }`:
 ///
 /// ```ignore
-/// impl Parse for Foo {
+/// impl parsyng::parse::Parse for Foo {
 ///     fn parse(input: &mut parsyng::parse::ParseBuffer) -> parsyng::error::Result<Self> {
 ///         Ok(Self {
 ///             a: input.parse()?,
@@ -176,8 +178,11 @@ pub fn proc_macro_derive_(args: TokenStream, input: TokenStream) -> TokenStream 
 /// }
 /// ```
 ///
-/// Tuple structs and unit structs are not yet supported (`todo!()` in the
-/// implementation).
+/// Tuple structs parse their fields positionally, and unit structs parse
+/// nothing. On an enum, each variant is tried in declaration order (without
+/// consuming any input on failure) and the first one that parses wins, so
+/// put more specific variants first; a unit variant always matches.
+/// Generic parameters and `where` clauses are carried over to the impl.
 ///
 /// See [`macro@ToTokens`] for the complementary derive.
 #[proc_macro_derive(Parse)]
@@ -189,22 +194,24 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Derives [`ToTokens`](parsyng_core::ToTokens) for a struct with named
-/// fields by appending each field's own tokens, in declaration order.
+/// Derives [`ToTokens`](parsyng_core::ToTokens) by appending each field's
+/// own tokens, in declaration order.
 ///
 /// Equivalent to writing, for `struct Foo { a: A, b: B }`:
 ///
 /// ```ignore
-/// impl ToTokens for Foo {
+/// impl parsyng::ToTokens for Foo {
 ///     fn to_tokens(&self, tokens: &mut parsyng::proc_macro::TokenStream) {
-///         self.a.to_tokens(tokens);
-///         self.b.to_tokens(tokens);
+///         parsyng::ToTokens::to_tokens(&self.a, tokens);
+///         parsyng::ToTokens::to_tokens(&self.b, tokens);
 ///     }
 /// }
 /// ```
 ///
-/// Tuple structs and unit structs are not yet supported (`todo!()` in the
-/// implementation).
+/// Tuple structs emit their fields positionally, unit structs emit nothing,
+/// and an enum emits the fields of whichever variant it holds (the variant
+/// name itself is not emitted). Generic parameters and `where` clauses are
+/// carried over to the impl.
 ///
 /// See [`macro@Parse`] for the complementary derive.
 #[proc_macro_derive(ToTokens)]

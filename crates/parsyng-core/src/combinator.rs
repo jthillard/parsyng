@@ -1,9 +1,10 @@
-//! Generic building blocks for writing [`Parse`](crate::parse::Parse)/[`ToTokens`]
-//! implementations without repeating yourself: sequencing
-//! ([`Cons`](crate::combinator::Cons), tuples), optionality (`Option<T>`),
-//! repetition ([`Punctuated`](crate::combinator::Punctuated), `Vec<T>`,
-//! [`GreedyVec`](crate::combinator::GreedyVec)) and alternation
-//! ([`Either`](crate::combinator::Either)).
+//! Generic building blocks for [`Parse`]/[`ToTokens`] implementations.
+//!
+//! They let you write those implementations without repeating yourself: sequencing
+//! ([`Cons`], tuples), optionality (`Option<T>`),
+//! repetition ([`Punctuated`], `Vec<T>`,
+//! [`GreedyVec`]) and alternation
+//! ([`Either`]).
 //!
 //! These are the same pieces the [`ast`](crate::ast) module is built out of,
 //! and are equally usable in your own hand-written or `#[derive(Parse)]`d

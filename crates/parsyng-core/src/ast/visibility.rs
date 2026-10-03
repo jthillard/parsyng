@@ -1,4 +1,5 @@
-//! Item visibility: `pub`, `pub(crate)`, `pub(self)`, `pub(in path)`, or
+//! Item visibility: `pub`, `pub(crate)`, `pub(self)`, `pub(super)`,
+//! `pub(in path)`, or
 //! private (no keyword at all).
 
 use crate::ToTokens;
@@ -7,9 +8,8 @@ use crate::{
     ast::{
         delimiter::Parenthesized,
         path::SimplePath,
-        tokens::{Crate, In, Pub, SelfValue},
+        tokens::{Crate, In, Pub, SelfValue, Super},
     },
-    error::Diagnostics,
     parse::{Parse, ParseBuffer},
     proc_macro::Delimiter,
 };
@@ -34,6 +34,10 @@ pub enum Visibility {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself>
     SelfVis(Pub, Parenthesized<SelfValue>),
+    /// `pub(super)`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself>
+    Super(Pub, Parenthesized<Super>),
     /// `pub(in path::to::mod)`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/visibility-and-privacy.html#pubin-path-pubcrate-pubsuper-and-pubself>
@@ -44,41 +48,55 @@ pub enum Visibility {
 
 impl Parse for Visibility {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        if let Ok(pub_token) = input.peek_parse::<Pub>() {
-            if let Some(group) = input.peek_group()
-                && group.delimiter() == Delimiter::Parenthesis
-            {
-                let mut group_input = ParseBuffer::new(group.stream());
-                if let Ok(crate_token) = group_input.peek_parse::<Crate>() {
-                    Ok(Self::Crate(
-                        pub_token,
-                        Parenthesized::new(input.group().unwrap(), crate_token),
-                    ))
-                } else if let Ok(self_token) = group_input.peek_parse::<SelfValue>() {
-                    Ok(Self::SelfVis(
-                        pub_token,
-                        Parenthesized::new(input.group().unwrap(), self_token),
-                    ))
-                } else if let Ok(in_token) = group_input.peek_parse::<In>() {
-                    let path = group_input.parse()?;
-                    Ok(Self::PubIn(
-                        pub_token,
-                        Parenthesized::new(input.group().unwrap(), (in_token, path)),
-                    ))
-                } else {
-                    Err(Diagnostics::new_error_spanned(
-                        "Expected `in`, `crate` or `self`",
-                        input.span(),
-                    ))
-                }
-            } else {
-                Ok(Self::Public(pub_token))
-            }
-        } else {
-            Ok(Self::Private)
+        let Ok(pub_token) = input.peek_parse::<Pub>() else {
+            return Ok(Self::Private);
+        };
+        let Some(group) = input.peek_group() else {
+            return Ok(Self::Public(pub_token));
+        };
+        if group.delimiter() != Delimiter::Parenthesis {
+            return Ok(Self::Public(pub_token));
         }
+        // `pub(crate)`, `pub(self)`, `pub(super)` or `pub(in path)`. Any
+        // other parenthesized group is not part of the visibility, e.g. the
+        // tuple type in `struct S(pub (u8, u8));`.
+        let mut group_input = ParseBuffer::new(group.stream());
+        let visibility = if let Ok(crate_token) = group_input.peek_parse::<Crate>() {
+            Restricted::Crate(crate_token)
+        } else if let Ok(self_token) = group_input.peek_parse::<SelfValue>() {
+            Restricted::SelfVis(self_token)
+        } else if let Ok(super_token) = group_input.peek_parse::<Super>() {
+            Restricted::Super(super_token)
+        } else if let Ok(in_token) = group_input.peek_parse::<In>() {
+            Restricted::PubIn(in_token, group_input.parse()?)
+        } else {
+            return Ok(Self::Public(pub_token));
+        };
+        if !group_input.is_empty() {
+            return Ok(Self::Public(pub_token));
+        }
+        let Some(group) = input.group() else {
+            unreachable!("a group was just peeked")
+        };
+        Ok(match visibility {
+            Restricted::Crate(token) => Self::Crate(pub_token, Parenthesized::new(group, token)),
+            Restricted::SelfVis(token) => Self::SelfVis(pub_token, Parenthesized::new(group, token)),
+            Restricted::Super(token) => Self::Super(pub_token, Parenthesized::new(group, token)),
+            Restricted::PubIn(token, path) => {
+                Self::PubIn(pub_token, Parenthesized::new(group, (token, path)))
+            }
+        })
     }
 }
+
+/// The contents of a `pub(...)` restriction.
+enum Restricted {
+    Crate(Crate),
+    SelfVis(SelfValue),
+    Super(Super),
+    PubIn(In, SimplePath),
+}
+
 impl ToTokens for Visibility {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         match self {
@@ -88,6 +106,10 @@ impl ToTokens for Visibility {
                 parenthesized.to_tokens(tokens);
             }
             Self::SelfVis(rust_keyword, parenthesized) => {
+                rust_keyword.to_tokens(tokens);
+                parenthesized.to_tokens(tokens);
+            }
+            Self::Super(rust_keyword, parenthesized) => {
                 rust_keyword.to_tokens(tokens);
                 parenthesized.to_tokens(tokens);
             }

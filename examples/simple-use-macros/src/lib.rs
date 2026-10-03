@@ -1,6 +1,6 @@
 use parsyng::{
     Parse, ToTokens,
-    ast::{crate_source::Crate, item::r#struct::Struct, tokens::Comma},
+    ast::{crate_source::Crate, item::r#struct::Struct, literal::LiteralStr, tokens::Comma},
     error::Result,
     proc_macro::Ident,
     proc_macro::TokenStream,
@@ -12,6 +12,28 @@ pub(crate) struct Foo {
     bar: u8,
     comma: Comma,
     then: Ident,
+}
+
+/// A tuple struct: `"text", 3`.
+#[derive(Parse, ToTokens)]
+pub(crate) struct Repeat(LiteralStr, Comma, u8);
+
+/// A unit struct: parses (and emits) nothing.
+#[derive(Parse, ToTokens)]
+pub(crate) struct Nothing;
+
+/// A generic struct.
+#[derive(Parse, ToTokens)]
+pub(crate) struct Wrapper<T>(T)
+where
+    T: Parse + ToTokens;
+
+/// An enum: the first variant that parses wins.
+#[derive(Parse, ToTokens)]
+pub(crate) enum Value {
+    Number(u8),
+    Text { text: LiteralStr },
+    Name(Ident),
 }
 
 #[parsyng::proc_macro(debug)]
@@ -57,4 +79,22 @@ pub fn simple_macro_derive(n: Struct) -> Result<TokenStream> {
     };
     println!("{}", _tokens);
     Ok(TokenStream::new())
+}
+
+/// Re-emit a number, string or identifier unchanged.
+#[parsyng::proc_macro]
+pub fn echo(value: Wrapper<Value>) -> Wrapper<Value> {
+    value
+}
+
+/// Expand to nothing at all.
+#[parsyng::proc_macro]
+pub fn nothing(nothing: Nothing) -> Nothing {
+    nothing
+}
+
+/// `repeat!("ab", 3)` expands to `"ababab"`.
+#[parsyng::proc_macro]
+pub fn repeat(Repeat(text, _, count): Repeat) -> String {
+    text.value().repeat(count.into())
 }

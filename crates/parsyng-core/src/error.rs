@@ -1,7 +1,7 @@
 //! Error reporting for [`Parse`](crate::parse::Parse) implementations.
 //!
 //! A `parsyng` parser doesn't return `Err(String)`: it returns
-//! `Err(`[`Diagnostics`](crate::error::Diagnostics)`)`, a spanned error
+//! <code>Err([Diagnostics])</code>, a spanned error
 //! that, once converted with [`ToTokens`], expands to one
 //! `compile_error!{ ... }` invocation per collected message, each pointing
 //! at the span responsible for it. This is what lets a macro built with

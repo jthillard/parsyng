@@ -45,6 +45,13 @@ impl Parse for SimplePath {
 }
 
 impl SimplePath {
+    /// The span of this path's first token (its leading `::`, if any).
+    #[must_use]
+    pub fn span(&self) -> Span {
+        self.start_token
+            .as_ref()
+            .map_or_else(|| self.root.span(), |start| start.spans()[0])
+    }
     /// This path's sole identifier, if it has no leading `::` and no
     /// additional `::`-separated segments.
     ///

@@ -20,18 +20,21 @@ members = [
 
 [package]
 name = "parsyng"
-description = "Procedural macro parsyng"
+description = "A from-scratch, fast-compiling replacement for `syn` + `quote` for writing procedural macros"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/supersurviveur/parsyng"
+documentation = "https://docs.rs/parsyng"
+rust-version = "1.95"
+include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
 keywords = ["macros", "proc", "quote"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [dependencies]
-parsyng-proc-macros = { path = "./crates/parsyng-proc-macros" }
-parsyng-core = { path = "./crates/parsyng-core" }
+parsyng-proc-macros = { version = "0.1.0", path = "./crates/parsyng-proc-macros" }
+parsyng-core = { version = "0.1.0", path = "./crates/parsyng-core" }
 
 [dev-dependencies]
 quote = "1"

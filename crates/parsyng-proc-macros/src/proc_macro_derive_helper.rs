@@ -1,73 +1,46 @@
 use parsyng_core as parsyng;
 
 use parsyng_core::{
-    ToTokens, Token,
     ast::tokens::Comma,
-    error::{self, Diagnostics},
-    format_ident, parse,
+    error, parse,
     proc_macro::{Ident, TokenStream},
     quote,
 };
 
-use crate::dbg_macros;
+use crate::helper_common::{MacroFn, parse_debug};
 
 pub fn proc_macro_derive(args: TokenStream, input: TokenStream) -> error::Result<TokenStream> {
-    let mut stream = parse::ParseBuffer::new(input);
+    let function = MacroFn::parse(input, 1, "`#[parsyng::proc_macro_derive]` function")?;
+
     let mut args = parse::ParseBuffer::new(args);
-
-    stream.parse::<Token![pub]>()?;
-    let signature = stream.parse::<parsyng_core::ast::signature::FnSignature>()?;
-    let macro_ident = signature.ident();
-
-    let params = signature.args();
-    assert_eq!(params.len(), 1);
-    let mut params = params.iter();
-
-    let item_param = params.next().unwrap();
-    let input_item_ident = item_param.ident();
-    let input_item_mut = item_param.mutability();
-    let item_type = item_param.ty();
-
-    let out_type = signature.return_type().to_token_stream();
-
-    // Create new function
-    let new_macro_ident = format_ident!("__parsyng_{}", signature.ident());
-
     let derive_ident = args.parse::<Ident>()?;
-
-    let dbg = if args.is_empty() {
-        TokenStream::new()
+    let debug = if args.is_empty() {
+        false
     } else {
         args.parse::<Comma>()?;
-        let ident = args.parse::<Ident>()?;
-        #[allow(clippy::cmp_owned)]
-        if ident.to_string() == "debug" {
-            dbg_macros(macro_ident)
-        } else {
-            return Err(Diagnostics::new_error_spanned(
-                "Expected `debug` or no arguments.",
-                ident.span(),
-            ));
-        }
+        parse_debug(&mut args)?
     };
+    let dbg = function.debug_call(debug);
 
-    let new_function = quote! {
+    let attributes = &function.attributes;
+    let macro_ident = function.signature.ident();
+    let inner_ident = &function.inner_ident;
+    let item_type = &function.param_types[0];
+    let out_type = &function.out_type;
+
+    Ok(quote! {
+        #attributes
         #[proc_macro_derive(#derive_ident)]
         pub fn #macro_ident(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-            let mut item_buffer = parsyng::parse::ParseBuffer::new(item.into());
-            let result = match <#item_type as parsyng::parse::Parse>::parse(&mut item_buffer) {
-                Ok(item) => #new_macro_ident(item),
+            let result = match parsyng::parse::parse_all::<#item_type>(item.into()) {
+                Ok(item) => #inner_ident(item),
                 Err(err) => return <parsyng::error::Diagnostics as parsyng::ToTokens>::to_token_stream(&err).into(),
             };
             let output = <#out_type as parsyng::ToTokens>::to_token_stream(&result);
             #dbg
             output.into()
         }
-    };
 
-    Ok(quote! {
-        #new_function
-
-        fn #new_macro_ident(#input_item_mut #input_item_ident: #item_type) -> #out_type #stream
+        #{ function.inner_function() }
     })
 }

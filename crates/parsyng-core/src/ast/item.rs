@@ -168,13 +168,6 @@ pub struct VisItem<T> {
 /// as its input parameter.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/procedural-macros.html#derive-macros>
-///
-/// # Limitations
-/// [`generics_parameters`](Self::generics_parameters),
-/// [`generics_parameters_mut`](Self::generics_parameters_mut) and
-/// [`split_generics_for_impl`](Self::split_generics_for_impl) only handle
-/// the [`Struct`](Self::Struct) variant so far; calling them on
-/// [`Enum`](Self::Enum) panics (`todo!()`).
 #[derive(Clone, Debug)]
 pub enum DeriveInput {
     /// Deriving on a `struct`.
@@ -185,33 +178,24 @@ pub enum DeriveInput {
 
 impl DeriveInput {
     /// This type's generic parameters, if any.
-    ///
-    /// # Panics
-    /// Panics (`todo!()`) for the [`Enum`](Self::Enum) variant.
     #[must_use]
     pub fn generics_parameters(&self) -> Option<&GenericParams> {
         match self {
             Self::Struct(vis_item) => vis_item.generic_parameters(),
-            Self::Enum(_vis_item) => todo!(),
+            Self::Enum(vis_item) => vis_item.generic_parameters(),
         }
     }
     /// Mutable access to this type's generic parameters, for adding trait
     /// bounds before re-emitting them (see
-    /// [`TypeParamBounds::push`](TypeParamBounds::push)).
-    ///
-    /// # Panics
-    /// Panics (`todo!()`) for the [`Enum`](Self::Enum) variant.
+    /// [`TypeParamBounds::push`]).
     pub fn generics_parameters_mut(&mut self) -> Option<&mut GenericParams> {
         match self {
             Self::Struct(vis_item) => vis_item.generic_parameters_mut(),
-            Self::Enum(_vis_item) => todo!(),
+            Self::Enum(vis_item) => vis_item.generic_parameters_mut(),
         }
     }
     /// Split this type's generics into the `impl<...>`, `Type<...>` and
     /// `where ...` pieces needed to build a trait impl.
-    ///
-    /// # Panics
-    /// Panics (`todo!()`) for the [`Enum`](Self::Enum) variant.
     #[must_use]
     pub fn split_generics_for_impl(
         &self,
@@ -222,7 +206,7 @@ impl DeriveInput {
     ) {
         match self {
             Self::Struct(vis_item) => vis_item.split_generics_for_impl(),
-            Self::Enum(_vis_item) => todo!(),
+            Self::Enum(vis_item) => vis_item.split_generics_for_impl(),
         }
     }
 }
@@ -236,6 +220,22 @@ impl DeriveInput {
             Self::Enum(vis_item) => vis_item.ident(),
         }
     }
+    /// The outer attributes of the struct or enum being derived on.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        match self {
+            Self::Struct(vis_item) => vis_item.attributes(),
+            Self::Enum(vis_item) => vis_item.attributes(),
+        }
+    }
+    /// The visibility of the struct or enum being derived on.
+    #[must_use]
+    pub fn visibility(&self) -> &Visibility {
+        match self {
+            Self::Struct(vis_item) => vis_item.visibility(),
+            Self::Enum(vis_item) => vis_item.visibility(),
+        }
+    }
 }
 
 impl Parse for ConstParam {
@@ -247,6 +247,24 @@ impl Parse for ConstParam {
             ty: input.parse()?,
             default: input.try_parse().ok(),
         })
+    }
+}
+
+impl<T> VisItem<T> {
+    /// This item's outer attributes.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+    /// This item's visibility.
+    #[must_use]
+    pub const fn visibility(&self) -> &Visibility {
+        &self.visibility
+    }
+    /// The item itself, without its attributes and visibility.
+    #[must_use]
+    pub const fn item(&self) -> &T {
+        &self.item
     }
 }
 
@@ -617,6 +635,11 @@ impl TypeParamBounds {
             bounds: Punctuated::new(),
         }
     }
+    /// Whether this list has no bounds at all.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.bounds.len() == 0
+    }
     /// Append one more bound, separated from the previous one by a `+`
     /// spanned at `bound`'s own span.
     pub fn push(&mut self, bound: TypeParamBound) {
@@ -920,7 +943,12 @@ impl ToTokens for TraitBound {
 impl ToTokens for TypeParam {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         self.ident.to_tokens(tokens);
-        self.colon.to_tokens(tokens);
+        match &self.colon {
+            Some(colon) => colon.to_tokens(tokens),
+            // Bounds were pushed onto a parameter that had none.
+            None if !self.bounds.is_empty() => Colon::new(self.ident.span()).to_tokens(tokens),
+            None => {}
+        }
         self.bounds.to_tokens(tokens);
         self.default.to_tokens(tokens);
     }

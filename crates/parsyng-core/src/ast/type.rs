@@ -82,16 +82,25 @@ pub enum Type {
 }
 
 impl Type {
-    /// This type's span.
-    ///
-    /// # Panics
-    /// Only the [`Never`](Self::Never) variant is implemented so far; every
-    /// other variant panics (`todo!()`).
+    /// This type's span: the span of the whole group for a parenthesized,
+    /// tuple, array or slice type, and the span of its first token
+    /// otherwise.
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
+            Self::Paren(paren) => paren.span(),
+            Self::ImplTrait(impl_trait) => impl_trait.impl_token.span(),
+            Self::Path(path) => path.span(),
+            Self::Tuple(tuple) => tuple.span(),
             Self::Never(not) => not.span(),
-            _ => todo!(),
+            Self::Pointer(pointer) => pointer.star_token.span(),
+            Self::Reference(reference) => reference.and_token.span(),
+            Self::Array(array) => array.span(),
+            Self::Slice(slice) => slice.span(),
+            Self::DynTrait(dyn_trait) => dyn_trait.dyn_token.span(),
+            Self::QualifiedPath(path) => path.lt_token.span(),
+            Self::BareFn(bare_fn) => bare_fn.span(),
+            Self::MacroInvocation(invocation) => invocation.span(),
         }
     }
 }
@@ -109,10 +118,26 @@ pub struct TypePath {
 }
 
 impl TypePath {
-    /// The span of this path's first segment.
+    /// The span of this path's first token (its leading `::`, if any).
     #[must_use]
     pub fn span(&self) -> Span {
-        self.root.span()
+        self.start_token
+            .as_ref()
+            .map_or_else(|| self.root.span(), |start| start.spans()[0])
+    }
+}
+
+impl TypeBareFn {
+    /// The span of this function pointer type's first token.
+    #[must_use]
+    pub fn span(&self) -> Span {
+        if let Some(unsafety) = &self.unsafety {
+            unsafety.span()
+        } else if let Some((extern_token, _)) = &self.extern_token {
+            extern_token.span()
+        } else {
+            self.fn_token.span()
+        }
     }
 }
 

@@ -1,8 +1,13 @@
 // Inspired from https://github.com/dtolnay/syn
 
 use parsyng::{
-    ast::item::{DeriveInput, GenericParam, GenericParams, r#struct::StructFields},
+    Index,
+    ast::item::{
+        DeriveInput, GenericParam, GenericParams, enum_item::EnumVariantFields,
+        r#struct::StructFields,
+    },
     parse_quote,
+    proc_macro::{Ident, Span},
     proc_macro::TokenStream,
     quote, quote_spanned,
 };
@@ -71,8 +76,9 @@ fn heap_size_sum(data: &DeriveInput) -> TokenStream {
                     //
                     //     0 + self.0.heap_size() + self.1.heap_size() + self.2.heap_size()
                     let mut recurse = fields.inner_ref().iter().enumerate().map(|(i, f)| {
+                        let index = Index::from(i);
                         quote_spanned! { f.span() =>
-                            heapsize::HeapSize::heap_size_of_children(&self.#i)
+                            heapsize::HeapSize::heap_size_of_children(&self.#index)
                         }
                     });
                     quote! {
@@ -85,6 +91,45 @@ fn heap_size_sum(data: &DeriveInput) -> TokenStream {
                 }
             }
         }
-        DeriveInput::Enum(_) => unimplemented!(),
+        DeriveInput::Enum(ref data) => {
+            // Expands to a match summing up the fields of whichever variant
+            // `self` holds:
+            //
+            //     match self {
+            //         Self::A { x, y } => 0 + x.heap_size() + y.heap_size(),
+            //         Self::B(f0) => 0 + f0.heap_size(),
+            //         Self::C => 0,
+            //     }
+            let mut arms = data.variants().iter().map(|variant| {
+                let ident = variant.ident();
+                match variant.fields() {
+                    EnumVariantFields::Named(fields) => {
+                        let mut names = fields.iter().map(|f| f.ident());
+                        let mut recurse = fields.iter().map(|f| {
+                            quote_spanned! { f.ident().span() =>
+                                heapsize::HeapSize::heap_size_of_children(#{ f.ident() })
+                            }
+                        });
+                        quote! { Self::#ident { #(#names),* } => 0 #(+ #recurse)* }
+                    }
+                    EnumVariantFields::Unnamed(fields) => {
+                        let bindings: Vec<_> = (0..fields.iter().count())
+                            .map(|i| Ident::new(&format!("f{i}"), Span::call_site()))
+                            .collect();
+                        let mut names = bindings.iter();
+                        let mut recurse = bindings.iter().map(|binding| {
+                            quote! { heapsize::HeapSize::heap_size_of_children(#binding) }
+                        });
+                        quote! { Self::#ident ( #(#names),* ) => 0 #(+ #recurse)* }
+                    }
+                    EnumVariantFields::Unit => quote! { Self::#ident => 0 },
+                }
+            });
+            quote! {
+                match self {
+                    #(#arms,)*
+                }
+            }
+        }
     }
 }

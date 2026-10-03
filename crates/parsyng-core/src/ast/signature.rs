@@ -90,28 +90,24 @@ impl FnParam {
             Self::Variadic(_) => None,
         }
     }
-    /// This parameter's bound name.
+    /// This parameter's bound name, if its pattern is a plain identifier.
     ///
-    /// # Panics
-    /// Panics (`todo!()`) if called on [`SelfParam`](Self::SelfParam) — not
-    /// yet implemented.
+    /// Returns `None` for [`SelfParam`](Self::SelfParam) (`self` is a
+    /// keyword, not an identifier; match on the variant to detect it), for
+    /// [`Variadic`](Self::Variadic), and for destructuring patterns.
     #[must_use]
     pub fn ident(&self) -> Option<&Ident> {
         match self {
-            Self::SelfParam(_) => todo!(),
             Self::Typed(pat_type) => pat_type.pat.ident(),
-            Self::Variadic(_) => None,
+            Self::SelfParam(_) | Self::Variadic(_) => None,
         }
     }
-    /// Whether this parameter's pattern is `mut`.
-    ///
-    /// # Panics
-    /// Panics (`todo!()`) if called on [`SelfParam`](Self::SelfParam) — not
-    /// yet implemented.
+    /// The `mut` keyword of this parameter's binding (`mut x: T`,
+    /// `mut self`, `&mut self`), if any.
     #[must_use]
     pub fn mutability(&self) -> Option<&Mut> {
         match self {
-            Self::SelfParam(_) => todo!(),
+            Self::SelfParam(self_param) => self_param.mutability.as_ref(),
             Self::Typed(pat_type) => pat_type.pat.mutability(),
             Self::Variadic(_) => None,
         }

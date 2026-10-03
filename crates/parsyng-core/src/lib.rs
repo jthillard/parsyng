@@ -33,15 +33,9 @@ pub use sealed::proc_macro;
 #[cfg(feature = "proc-macro2")]
 pub use proc_macro2 as proc_macro;
 
-/// AST nodes and token wrappers for Rust syntax fragments.
-///
 pub mod ast;
-/// Parser combinators used by the syntax tree types.
-///
 pub mod combinator;
-/// Error and diagnostic types returned by parsers.
 pub mod error;
-/// The `ParseBuffer` type and parsing traits.
 pub mod parse;
 /// Helpers for proc-macro specific token manipulation.
 pub mod proc_macro_ext;
@@ -59,8 +53,9 @@ pub use parsyng_quote_macros::{quote, quote_spanned};
 ///
 /// Equivalent to `syn::parse_quote!`: the input accepts the same
 /// `#interpolation` syntax as [`quote!`], the resulting tokens are parsed as
-/// `T` (inferred from context), and parsing failures panic rather than
-/// returning a `Result` — use this for syntax you know must be valid (e.g.
+/// `T` (inferred from context), and parsing failures (including leftover
+/// tokens) panic rather than returning a `Result` — use this for syntax you
+/// know must be valid (e.g.
 /// building a fixed piece of generated code), not for parsing arbitrary
 /// macro input.
 ///
@@ -73,8 +68,7 @@ pub use parsyng_quote_macros::{quote, quote_spanned};
 #[macro_export]
 macro_rules! parse_quote {
     ($($t:tt)*) => {{
-        let mut stream = $crate::parse::ParseBuffer::new($crate::quote! { $($t)* });
-        stream.parse().unwrap()
+        $crate::parse::parse_all($crate::quote! { $($t)* }).expect("`parse_quote!` failed to parse its input")
     }};
 }
 
@@ -112,6 +106,44 @@ pub trait ToTokens {
         let mut token_stream = crate::proc_macro::TokenStream::new();
         self.to_tokens(&mut token_stream);
         token_stream
+    }
+}
+
+/// The index of a tuple field, turning into an *unsuffixed* integer literal.
+///
+/// Interpolating a plain `usize` in [`quote!`] produces a suffixed literal
+/// (`0usize`), which is not a valid field name: use `Index` to generate
+/// `self.0`-style accesses instead.
+///
+/// ```no_run
+/// # use parsyng_core as parsyng;
+/// use parsyng::{Index, quote};
+///
+/// let mut fields = (0..3).map(Index::from);
+/// let sum = quote! { 0 #(+ self.#fields)* }; // `0 + self.0 + self.1 + self.2`
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct Index {
+    /// The field's position.
+    pub index: usize,
+    /// The span of the generated literal.
+    pub span: crate::proc_macro::Span,
+}
+
+impl From<usize> for Index {
+    fn from(index: usize) -> Self {
+        Self {
+            index,
+            span: crate::proc_macro::Span::call_site(),
+        }
+    }
+}
+
+impl ToTokens for Index {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        let mut literal = crate::proc_macro::Literal::usize_unsuffixed(self.index);
+        literal.set_span(self.span);
+        tokens.extend(Some(crate::proc_macro::TokenTree::Literal(literal)));
     }
 }
 

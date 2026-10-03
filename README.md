@@ -28,7 +28,7 @@ parsyng = "0.1"
   return any `ToTokens` value, instead of hand-rolling `TokenStream` parsing
   and error reporting.
 - **`#[derive(Parse)]`** and **`#[derive(ToTokens)]`** — implement both traits
-  on your own structs field-by-field.
+  on your own structs and enums field-by-field.
 
 ## Quick start
 
@@ -57,10 +57,10 @@ A `#[derive(...)]`-style macro built directly on the `ast` types, ported from
 
 ## Why not `syn`?
 
-`parsyng` does not aim to be a superset of `syn`'s grammar coverage — a few
-corners (string/char/byte literals, slice/range/box patterns, unstable
-let-chains, `try`/`yeet` blocks, inline `asm!`) are still unimplemented; see
-the `ast` module documentation for exact coverage. What it offers instead:
+`parsyng`'s grammar coverage is close to the full stable Rust grammar; the
+remaining gaps (slice, range and `box` patterns, and unstable syntax such as
+`try` blocks) are listed in the `ast` module documentation, and are reported
+as regular parse errors. What it offers on top:
 
 - A single crate with no required dependency on `syn`/`quote`, built directly
   on `proc_macro` (or, optionally, `proc_macro2`).
@@ -71,6 +71,10 @@ the `ast` module documentation for exact coverage. What it offers instead:
   `#[parsyng::proc_macro_derive]` helper attributes, which remove almost all
   of the boilerplate `syn`/`quote`-based macros still need to hand-write
   (parsing the input, matching on the `Result`, converting the output).
+
+## Minimum supported Rust version
+
+Rust 1.95 or newer (edition 2024).
 
 ## Feature flags
 
@@ -104,7 +108,7 @@ all re-exported here so that depending on `parsyng` alone is enough:
 - [`examples/simple-use`](examples/simple-use) — a grab bag exercising all
   three macro-helper attributes plus the `Parse`/`ToTokens` derives.
 - [`examples/heapsize`](examples/heapsize) — a `#[derive(HeapSize)]` macro
-  walking struct fields, ported from `syn`'s documentation.
+  walking struct and enum fields, ported from `syn`'s documentation.
 - [`examples/debug-attribute`](examples/debug-attribute) — using the `debug`
   argument to diagnose a macro that emits invalid Rust syntax.
 

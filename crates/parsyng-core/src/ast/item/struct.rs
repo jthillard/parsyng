@@ -78,15 +78,19 @@ impl Parse for Struct {
         let struct_token = input.parse()?;
         let struct_ident = input.parse()?;
         let generic_parameters = input.try_parse().ok();
-        let where_clause = input.try_parse().ok();
+        let mut where_clause = input.try_parse().ok();
         let (fields, semicolon) = if let Some(group) = input.peek_group()
             && group.delimiter() == Delimiter::Brace
         {
             (StructFields::Named(input.parse()?), None)
-        } else if let Some(group) = input.peek_group()
+        } else if where_clause.is_none()
+            && let Some(group) = input.peek_group()
             && group.delimiter() == Delimiter::Parenthesis
         {
-            (StructFields::Unnamed(input.parse()?), Some(input.parse()?))
+            // A tuple struct's `where` clause comes after its fields.
+            let fields = StructFields::Unnamed(input.parse()?);
+            where_clause = input.try_parse().ok();
+            (fields, Some(input.parse()?))
         } else {
             (StructFields::Unit, Some(input.parse()?))
         };
@@ -107,8 +111,13 @@ impl ToTokens for Struct {
         self.struct_token.to_tokens(tokens);
         self.ident.to_tokens(tokens);
         self.generic_parameters.to_tokens(tokens);
-        self.where_clause.to_tokens(tokens);
-        self.fields.to_tokens(tokens);
+        if matches!(self.fields, StructFields::Unnamed(_)) {
+            self.fields.to_tokens(tokens);
+            self.where_clause.to_tokens(tokens);
+        } else {
+            self.where_clause.to_tokens(tokens);
+            self.fields.to_tokens(tokens);
+        }
         self.semicolon.to_tokens(tokens);
     }
 }
@@ -143,13 +152,13 @@ pub enum StructFields {
 /// One positional field in a [`StructFields::Unnamed`] tuple struct, e.g.
 /// `pub(crate) i32`.
 ///
-/// Unlike [`StructField`], it has no `ident`, only a visibility-less type
-/// (visibility on tuple fields isn't parsed here).
+/// Unlike [`StructField`], it has no `ident`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
 #[derive(Clone, Debug)]
 pub struct TupleField {
     attributes: Vec<crate::ast::attributes::Attribute>,
+    visibility: Visibility,
     ty: Type,
 }
 
@@ -164,6 +173,21 @@ impl StructField {
     pub const fn ident(&self) -> &Ident {
         &self.ident
     }
+    /// This field's outer attributes.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+    /// This field's visibility.
+    #[must_use]
+    pub const fn visibility(&self) -> &Visibility {
+        &self.visibility
+    }
+    /// This field's type.
+    #[must_use]
+    pub const fn ty(&self) -> &Type {
+        &self.ty
+    }
 }
 
 impl TupleField {
@@ -171,6 +195,21 @@ impl TupleField {
     #[must_use]
     pub fn span(&self) -> Span {
         self.ty.span()
+    }
+    /// This field's outer attributes.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+    /// This field's visibility.
+    #[must_use]
+    pub const fn visibility(&self) -> &Visibility {
+        &self.visibility
+    }
+    /// This field's type.
+    #[must_use]
+    pub const fn ty(&self) -> &Type {
+        &self.ty
     }
 }
 
@@ -191,6 +230,7 @@ impl Parse for TupleField {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
             attributes: parse_outer_attributes(input),
+            visibility: input.parse()?,
             ty: input.parse()?,
         })
     }
@@ -219,6 +259,7 @@ impl ToTokens for StructFields {
 impl ToTokens for TupleField {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         self.attributes.to_tokens(tokens);
+        self.visibility.to_tokens(tokens);
         self.ty.to_tokens(tokens);
     }
 }

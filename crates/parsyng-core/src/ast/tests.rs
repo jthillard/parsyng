@@ -17,9 +17,13 @@ use crate::{
             GenericParam, GenericParams, Lifetime, LifetimeBounds, LifetimeParam,
             LifetimeWhereClauseItem, TraitBound, TypeBoundWhereClauseItem, TypeParam,
             TypeParamBound, TypeParamBounds, WhereClause, WhereClauseItem, associated::*,
-            constant::ConstantItem, implementation::Implementation, r#struct::*,
+            DeriveInput, constant::ConstantItem, enum_item::EnumVariantFields,
+            implementation::Implementation, r#struct::*,
         },
-        literal::{Literal, LiteralFloat, LiteralNumber},
+        literal::{
+            Literal, LiteralByte, LiteralByteStr, LiteralCStr, LiteralChar, LiteralFloat,
+            LiteralNumber, LiteralStr,
+        },
         path::{GenericArg, GenericArgs, SimplePath, TypePathSegment},
         statements::Statement,
         r#type::{Type, TypePath},
@@ -84,6 +88,91 @@ fn literal_nodes() {
 }
 
 #[test]
+fn numeric_literal_kinds() {
+    for int in ["1usize", "0x1f", "0b1010u8", "0o17", "1_000i64"] {
+        assert!(matches!(check::<Literal>(ts(int)), Literal::UInt(_)), "{int}");
+    }
+    for float in ["1e10", "1.5E-3", "2f32", "1_0.0_1f64"] {
+        assert!(matches!(check::<Literal>(ts(float)), Literal::Float(_)), "{float}");
+    }
+}
+
+#[test]
+fn string_literals() {
+    let plain = check::<LiteralStr>(ts(r#""a\tb\n\"\\\x41\u{1F980}\u{0_0e9}""#));
+    assert_eq!(plain.value(), "a\tb\n\"\\A\u{1F980}\u{e9}");
+    assert_eq!(plain.suffix(), "");
+
+    let raw = check::<LiteralStr>(ts("r#\"no \\n \"escapes\"\"#"));
+    assert_eq!(raw.value(), r#"no \n "escapes""#);
+
+    let continuation = check::<LiteralStr>(ts("\"a\\\n     b\""));
+    assert_eq!(continuation.value(), "ab");
+
+    let suffixed = check::<LiteralStr>(ts(r#""x"suffix"#));
+    assert_eq!(suffixed.value(), "x");
+    assert_eq!(suffixed.suffix(), "suffix");
+
+    assert!(matches!(check::<Literal>(ts(r#""s""#)), Literal::Str(_)));
+    assert!(matches!(check::<Literal>(ts(r#"r"s""#)), Literal::Str(_)));
+    assert_eq!(parse_exact::<String>(ts(r#""hello""#)), "hello");
+    // `quote!` emits plain literal tokens, so they parse directly.
+    assert_eq!(parse_exact::<String>(quote! { "quoted" }), "quoted");
+    assert_eq!(parse_exact::<u8>(quote! { 7 }), 7);
+}
+
+#[test]
+fn byte_and_c_string_literals() {
+    let bytes = check::<LiteralByteStr>(ts(r#"b"a\xFF\0""#));
+    assert_eq!(bytes.value(), b"a\xFF\0");
+    let raw_bytes = check::<LiteralByteStr>(ts(r##"br#"\x"#"##));
+    assert_eq!(raw_bytes.value(), br"\x");
+    assert!(matches!(check::<Literal>(ts(r#"b"s""#)), Literal::ByteStr(_)));
+
+    let c_str = check::<LiteralCStr>(ts(r#"c"a\xFF\u{e9}""#));
+    assert_eq!(c_str.value().to_bytes(), b"a\xFF\xC3\xA9");
+    let raw_c_str = check::<LiteralCStr>(ts(r#"cr"\n""#));
+    assert_eq!(raw_c_str.value(), cr"\n");
+    assert!(matches!(check::<Literal>(ts(r#"c"s""#)), Literal::CStr(_)));
+}
+
+#[test]
+fn char_and_byte_literals() {
+    assert_eq!(check::<LiteralChar>(ts("'a'")).value(), 'a');
+    assert_eq!(check::<LiteralChar>(ts(r"'\''")).value(), '\'');
+    assert_eq!(check::<LiteralChar>(ts(r"'\u{1F980}'")).value(), '\u{1F980}');
+    assert_eq!(parse_exact::<char>(ts("'z'")), 'z');
+    assert!(matches!(check::<Literal>(ts("'a'")), Literal::Char(_)));
+
+    assert_eq!(check::<LiteralByte>(ts("b'a'")).value(), b'a');
+    assert_eq!(check::<LiteralByte>(ts(r"b'\xFF'")).value(), 0xFF);
+    assert!(matches!(check::<Literal>(ts("b'a'")), Literal::Byte(_)));
+
+    assert!(parse_exact::<bool>(ts("true")));
+    assert!(!parse_exact::<bool>(ts("false")));
+}
+
+#[test]
+fn invalid_literals_are_errors() {
+    fn fails<T: crate::Parse>(input: &str) {
+        let mut buffer = ParseBuffer::new(ts(input));
+        assert!(buffer.parse::<T>().is_err(), "{input} should not parse");
+    }
+    // Malformed escapes are already rejected by the tokenizer; see the unit
+    // tests in `ast::literal` for those.
+    fails::<LiteralStr>("'a'");
+    fails::<LiteralChar>(r#""a""#);
+    fails::<LiteralByte>("'a'");
+    fails::<String>("1");
+    fails::<bool>("maybe");
+
+    // A failed parse leaves the input untouched.
+    let mut buffer = ParseBuffer::new(ts("'a'"));
+    assert!(buffer.parse::<LiteralStr>().is_err());
+    assert!(buffer.parse::<LiteralChar>().is_ok());
+}
+
+#[test]
 fn visibility_nodes() {
     let private = check::<Visibility>(quote! {});
     assert!(matches!(private, Visibility::Private));
@@ -99,6 +188,65 @@ fn visibility_nodes() {
 
     let vis_in = check::<Visibility>(quote! { pub(in a::b) });
     assert!(matches!(vis_in, Visibility::PubIn(_, _)));
+
+    let vis_super = check::<Visibility>(quote! { pub(super) });
+    assert!(matches!(vis_super, Visibility::Super(_, _)));
+
+    // A parenthesized group that is not a restriction is left in the input.
+    let mut input = ParseBuffer::new(quote! { pub (u8, u8) });
+    assert!(matches!(input.parse::<Visibility>(), Ok(Visibility::Public(_))));
+    assert!(!input.is_empty());
+}
+
+#[test]
+fn derive_input_nodes() {
+    let tuple = check::<DeriveInput>(quote! {
+        #[derive(Clone)]
+        pub(crate) struct Pair<T: Clone>(pub T, pub (u8, u8)) where T: Default;
+    });
+    assert_eq!(tuple.ident().to_string(), "Pair");
+    assert_eq!(tuple.attributes().len(), 1);
+    assert!(matches!(tuple.visibility(), Visibility::Crate(_, _)));
+    assert!(tuple.generics_parameters().is_some());
+    let DeriveInput::Struct(item) = &tuple else {
+        panic!("expected a struct")
+    };
+    let StructFields::Unnamed(fields) = &item.fields else {
+        panic!("expected a tuple struct")
+    };
+    assert_eq!(fields.iter().count(), 2);
+    assert!(fields.iter().all(|field| matches!(field.visibility(), Visibility::Public(_))));
+
+    let mut enumeration = check::<DeriveInput>(quote! {
+        enum Shape<'a, T> where T: Copy {
+            Unit,
+            Tuple(&'a T, u8) = 3,
+            Named { #[attr] x: T, y: u8 },
+        }
+    });
+    assert_eq!(enumeration.ident().to_string(), "Shape");
+    assert!(enumeration.generics_parameters().is_some());
+    assert!(enumeration.generics_parameters_mut().is_some());
+    let (impl_generics, type_generics, where_clause) = enumeration.split_generics_for_impl();
+    let generated = quote! { impl #impl_generics Trait for Shape #type_generics #where_clause {} };
+    assert_eq!(
+        generated.to_string().replace(' ', ""),
+        "impl<'a,T,>TraitforShape<'a,T,>whereT:Copy{}",
+    );
+    let DeriveInput::Enum(item) = &enumeration else {
+        panic!("expected an enum")
+    };
+    let variants: Vec<_> = item.variants().iter().collect();
+    assert_eq!(variants.len(), 3);
+    assert!(matches!(variants[0].fields(), EnumVariantFields::Unit));
+    assert!(matches!(variants[1].fields(), EnumVariantFields::Unnamed(_)));
+    assert!(variants[1].discriminant().is_some());
+    let EnumVariantFields::Named(fields) = variants[2].fields() else {
+        panic!("expected named fields")
+    };
+    let field = fields.iter().next().unwrap();
+    assert_eq!(field.ident().to_string(), "x");
+    assert_eq!(field.attributes().len(), 1);
 }
 
 #[test]
@@ -245,3 +393,4 @@ fn statement_and_crate_nodes() {
         impl A { type Assoc; const VALUE: u8; }
     });
 }
+

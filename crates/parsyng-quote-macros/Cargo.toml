@@ -6,6 +6,9 @@ edition = "2024"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/supersurviveur/parsyng"
+documentation = "https://docs.rs/parsyng-quote-macros"
+rust-version = "1.95"
+include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
 keywords = ["macros", "proc", "quote"]
 categories = ["development-tools::procedural-macro-helpers"]
 

@@ -21,7 +21,7 @@
 //!   and return any [`ToTokens`] value, instead of hand-rolling
 //!   `proc_macro::TokenStream` parsing and error reporting.
 //! - **[`macro@Parse`]** and **[`macro@ToTokens`]** derive macros, for
-//!   implementing both traits on your own structs field-by-field.
+//!   implementing both traits on your own structs and enums field-by-field.
 //!
 //! # Quick start
 //!
@@ -95,8 +95,11 @@
 //!
 //! # `syn` vs `parsyng`
 //!
-//! `parsyng` aims to be as complete as `syn`, but with some useful helpers to reduce the complexity of procedural macros.
-//! Currently, here are the differences between `parsyng` and `syn` : 
+//! `parsyng` aims to be as complete as `syn`, but with some useful helpers to
+//! reduce the complexity of procedural macros. Its grammar coverage is close
+//! to the full stable Rust grammar — see the [`ast`] module documentation for
+//! the few remaining gaps. Here are the differences between `parsyng` and
+//! `syn`:
 //!
 //! - A single crate with no required external dependency on `syn`/`quote`,
 //!   built directly on `proc_macro` (`proc_macro2` is opt-in).
@@ -104,8 +107,9 @@
 //!   [`macro@proc_macro_derive`] helper attributes, which remove almost all of
 //!   the boilerplate `syn`/`quote`-based macros still need to hand-write
 //!   (parsing the input, matching on the `Result`, converting the output).
-//! - More types implements [`Parse`] and `parsyng` provides a [`macro@Parse`]
-//!   derive macros to avoid implementing it manually.
+//! - More types implement [`Parse`] (`u8`, `String`, `char`, `bool`, ...),
+//!   and the [`macro@Parse`]/[`macro@ToTokens`] derive macros avoid
+//!   implementing them manually.
 //!
 //! # Feature flags
 //!

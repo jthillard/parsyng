@@ -5,9 +5,10 @@ pub fn push_lit_spanned(
     span: proc_macro::Span,
     tokens: &mut proc_macro::TokenStream,
 ) {
-    let mut group = proc_macro::Group::new(proc_macro::Delimiter::None, stream);
-    group.set_span(span);
-    tokens.extend(core::iter::once(group));
+    tokens.extend(stream.into_iter().map(|mut token| {
+        token.set_span(span);
+        token
+    }));
 }
 pub fn push_group_spanned(
     delimiter: proc_macro::Delimiter,
@@ -53,10 +54,7 @@ pub fn push_punct_joint_spanned(
 }
 
 pub fn push_lit(stream: proc_macro::TokenStream, tokens: &mut proc_macro::TokenStream) {
-    tokens.extend(core::iter::once(proc_macro::Group::new(
-        proc_macro::Delimiter::None,
-        stream,
-    )));
+    tokens.extend(stream);
 }
 pub fn push_group(
     delimiter: proc_macro::Delimiter,

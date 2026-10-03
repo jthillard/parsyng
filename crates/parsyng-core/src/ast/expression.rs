@@ -10,12 +10,10 @@
 //! [`ExpressionWithoutBlock`] needs one (except in tail position).
 //! [`Expression`] itself is a thin wrapper over the two.
 //!
-//! Coverage is close to the full stable grammar. The remaining gaps: string/
-//! char/byte literals (a pre-existing limitation of
-//! [`ast::literal::Literal`](crate::ast::literal::Literal)), slice/range/box
-//! patterns (see [`ast::pattern`](crate::ast::pattern)), unstable
-//! multi-condition let-chains (`if let ... && let ...`), `try`/`yeet`
-//! blocks, and inline `asm!`.
+//! Coverage is close to the full stable grammar, let-chains included. The
+//! remaining gaps: slice/range/box patterns (see
+//! [`ast::pattern`](crate::ast::pattern)) and unstable syntax such as
+//! `try`/`yeet` blocks.
 //!
 //! [`ExpressionWithoutBlock::parse`] is a hand-written precedence-climbing
 //! parser — see the doc comment on the `impl ExpressionWithoutBlock` block
@@ -45,7 +43,7 @@ use crate::{
     combinator::{Punctuated, StopOnError},
     error::{Diagnostics, Result},
     parse::{Parse, ParseBuffer},
-    proc_macro::{Group, Ident},
+    proc_macro::{Group, Ident, TokenTree},
 };
 
 /// Wrap an [`ExpressionWithoutBlock`] in the [`Expression`] enum — used
@@ -305,14 +303,30 @@ pub enum ElseExpression {
 
 /// The condition of an [`IfExpression`]/[`WhileExpression`].
 ///
-/// Either a plain (struct-literal-restricted) expression, or `let PATTERN =
-/// EXPR` (also restricted). Only the single-condition stable form is
-/// supported — not the unstable multi-condition let-chains (`if let ... &&
-/// let ...`).
+/// Either a plain (struct-literal-restricted) expression, `let PATTERN =
+/// EXPR` (also restricted), or a let-chain mixing both with `&&` (`if let
+/// Some(x) = a && x > 0 && let Ok(y) = f(x)`).
 ///
-/// Reference: <https://doc.rust-lang.org/reference/expressions/if-expr.html#if-let-expressions>
+/// In a let-chain, each operand binds tighter than `&&`, so a top-level
+/// range (`let x = a..b && ...`) in a `let` scrutinee must be parenthesized.
+///
+/// Reference: <https://doc.rust-lang.org/reference/expressions/if-expr.html>
 #[derive(Clone, Debug)]
 pub enum Conditions {
+    /// `let PATTERN = EXPR`.
+    Let(Let, Pattern, Eq, Box<Expression>),
+    /// A plain expression.
+    Expr(Expression),
+    /// A let-chain: at least two `&&`-separated operands, at least one of
+    /// which is a `let`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/expressions/if-expr.html#chains-of-conditions>
+    Chain(Box<Condition>, Vec<(AndAnd, Condition)>),
+}
+
+/// One `&&`-separated operand of a let-chain ([`Conditions::Chain`]).
+#[derive(Clone, Debug)]
+pub enum Condition {
     /// `let PATTERN = EXPR`.
     Let(Let, Pattern, Eq, Box<Expression>),
     /// A plain expression.
@@ -2106,17 +2120,90 @@ impl ToTokens for IfExpression {
 
 impl Parse for Conditions {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        if let Ok(let_token) = input.try_parse::<Let>() {
-            let pat = input.parse()?;
-            let eq = input.parse()?;
-            let scrutinee = parse_restricted_scrutinee(input)?;
-            return Ok(Self::Let(let_token, pat, eq, Box::new(scrutinee)));
+        if has_top_level_let(input)
+            && let Ok(chain) = input.try_advance(parse_let_chain)
+        {
+            return Ok(chain);
         }
         Ok(Self::Expr(parse_restricted_scrutinee(input)?))
     }
 }
 
+/// Whether a `let` keyword appears in the condition starting at `input`,
+/// i.e. before the first `{ ... }` group (the `if`/`while` body).
+#[allow(clippy::cmp_owned)]
+fn has_top_level_let(input: &ParseBuffer) -> bool {
+    for token in input.clone() {
+        match token {
+            TokenTree::Ident(ident) if ident.to_string() == "let" => return true,
+            TokenTree::Group(group) if group.delimiter() == Delimiter::Brace => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Parse one operand of a let-chain, binding tighter than `&&`.
+fn parse_condition(input: &mut ParseBuffer) -> Result<Condition> {
+    if let Ok(let_token) = input.try_parse::<Let>() {
+        let pat = input.parse()?;
+        let eq = input.parse()?;
+        let scrutinee = ExpressionWithoutBlock::parse_compare(input, false)?;
+        return Ok(Condition::Let(let_token, pat, eq, Box::new(wrap(scrutinee))));
+    }
+    if let Ok(block) = input.try_parse() {
+        return Ok(Condition::Expr(Expression::WithBlock(Box::new(block))));
+    }
+    Ok(Condition::Expr(wrap(ExpressionWithoutBlock::parse_compare(
+        input, false,
+    )?)))
+}
+
+/// Parse a condition containing at least one `let`, failing otherwise so
+/// that plain expressions go through the full expression parser.
+fn parse_let_chain(input: &mut ParseBuffer) -> Result<Conditions> {
+    let first = parse_condition(input)?;
+    let mut rest = vec![];
+    while let Ok(and) = input.try_parse::<AndAnd>() {
+        rest.push((and, parse_condition(input)?));
+    }
+    let is_let = |condition: &Condition| matches!(condition, Condition::Let(..));
+    match first {
+        Condition::Let(let_token, pat, eq, scrutinee) if rest.is_empty() => {
+            Ok(Conditions::Let(let_token, pat, eq, scrutinee))
+        }
+        first if is_let(&first) || rest.iter().any(|(_, condition)| is_let(condition)) => {
+            Ok(Conditions::Chain(Box::new(first), rest))
+        }
+        _ => Err(Diagnostics::new_error_spanned(
+            "Expected a `let` condition",
+            input.span(),
+        )),
+    }
+}
+
 impl ToTokens for Conditions {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        match self {
+            Self::Let(let_token, pat, eq, expr) => {
+                let_token.to_tokens(tokens);
+                pat.to_tokens(tokens);
+                eq.to_tokens(tokens);
+                expr.to_tokens(tokens);
+            }
+            Self::Expr(expr) => expr.to_tokens(tokens),
+            Self::Chain(first, rest) => {
+                first.to_tokens(tokens);
+                for (and, condition) in rest {
+                    and.to_tokens(tokens);
+                    condition.to_tokens(tokens);
+                }
+            }
+        }
+    }
+}
+
+impl ToTokens for Condition {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         match self {
             Self::Let(let_token, pat, eq, expr) => {
@@ -2520,6 +2607,31 @@ mod tests {
     }
 
     #[test]
+    fn let_chains() {
+        let e = parse_check_block("if let Some(x) = a && x > 0 && let Ok(y) = f(x) { }");
+        assert!(matches!(
+            e,
+            ExpressionWithBlock::If(IfExpression {
+                condition: Conditions::Chain(..),
+                ..
+            })
+        ));
+        check::<IfExpression>("if a && let Some(x) = b { }".parse().unwrap());
+        check::<WhileExpression>("while let Some(x) = it.next() && x != 0 { }".parse().unwrap());
+        // No `let`: an ordinary expression, `||` included.
+        let e = parse_check_block("if a && b || c { }");
+        assert!(matches!(
+            e,
+            ExpressionWithBlock::If(IfExpression {
+                condition: Conditions::Expr(_),
+                ..
+            })
+        ));
+        // A `let` inside the body doesn't make the condition a chain.
+        check::<IfExpression>("if a && b { let x = 1; }".parse().unwrap());
+    }
+
+    #[test]
     fn while_let_expression() {
         check::<WhileExpression>("while let Some(x) = y { }".parse().unwrap());
         check::<WhileExpression>("'lbl: while x < 10 { }".parse().unwrap());
@@ -2544,15 +2656,12 @@ mod tests {
 
     #[test]
     fn realistic_function_body_round_trips() {
-        // note: no string literals — only numeric literals are supported
-        // (a pre-existing, documented gap in `ast::literal::Literal`,
-        // unrelated to this expression work).
         check::<Braced<Vec<Statement>>>(
-            "{
+            r#"{
                 let result = match items.iter().find(|x| x.id == target) {
                     Some(item) if item.active => Ok(item.value.clone()),
-                    Some(_) => Err(1),
-                    None => Err(0),
+                    Some(_) => Err("inactive"),
+                    None => Err(r"not found"),
                 };
                 for entry in &mut list {
                     entry.count += 1;
@@ -2560,8 +2669,9 @@ mod tests {
                 while let Some(next) = queue.pop() {
                     process(next)?;
                 }
+                let byte = if c == 'a' { b'a' } else { b"xyz"[0] };
                 Point { x: 1, y: 2, ..default }
-            }"
+            }"#
             .parse()
             .unwrap(),
         );

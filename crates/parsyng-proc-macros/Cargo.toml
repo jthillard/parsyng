@@ -6,6 +6,9 @@ edition = "2024"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/supersurviveur/parsyng"
+documentation = "https://docs.rs/parsyng-proc-macros"
+rust-version = "1.95"
+include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
 keywords = ["macros", "proc", "quote"]
 categories = ["development-tools::procedural-macro-helpers"]
 
@@ -13,4 +16,4 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dependencies]
-parsyng-core = { path = "../parsyng-core" }
+parsyng-core = { version = "0.1.0", path = "../parsyng-core" }
