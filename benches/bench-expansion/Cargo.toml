@@ -1,0 +1,19 @@
+[package]
+name = "bench-expansion"
+description = "A crate deriving `HeapSize` on 200 types, to bench macro expansion time of syn, unsynn, moxy and parsyng"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+repository = "https://github.com/supersurviveur/parsyng"
+
+[dependencies]
+bench-comptime = { path = "../bench-comptime", features = ["big"] }
+
+[features]
+# One library must be enabled; the bench recipes use `--no-default-features`.
+default = ["parsyng"]
+syn = ["bench-comptime/syn"]
+unsynn = ["bench-comptime/unsynn"]
+moxy = ["bench-comptime/moxy"]
+parsyng = ["bench-comptime/parsyng"]

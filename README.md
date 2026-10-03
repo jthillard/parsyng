@@ -66,7 +66,8 @@ as regular parse errors. What it offers on top:
   on `proc_macro` (or, optionally, `proc_macro2`).
 - `quote!` implemented as a genuine procedural macro rather than a
   `macro_rules!`, which noticeably reduces the compile time of macro-heavy
-  crates — see [`benches/`](benches) for comparative numbers.
+  crates — see [`BENCH.md`](BENCH.md) for numbers against `syn`/`quote`,
+  `unsynn` and `moxy` (regenerate them with `just bench-report`).
 - The `#[parsyng::proc_macro]` / `#[parsyng::proc_macro_attribute]` /
   `#[parsyng::proc_macro_derive]` helper attributes, which remove almost all
   of the boilerplate `syn`/`quote`-based macros still need to hand-write

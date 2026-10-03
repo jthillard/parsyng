@@ -15,8 +15,12 @@ just test                                   # cargo test --package parsyng-core 
 cargo test -p parsyng-core --features proc-macro2 <test_name>   # single test
 cargo test -p parsyng-core --features proc-macro2 --test parse_crates  # whole-file round-trip test
 cargo clippy --workspace --all-targets --features proc-macro2
-just bench-runtime                          # cargo bench --features proc-macro2
-just bench-comptime                         # hyperfine compile-time comparison vs syn/unsynn (needs hyperfine)
+just bench-runtime                          # criterion: quote!/parsing runtime vs syn+quote, unsynn, moxy
+just bench-comptime                         # hyperfine: clean build of the same derive per library
+just bench-quote-comptime                   # hyperfine: clean build of the same quote! template per library
+just bench-expansion                        # hyperfine: expanding 200 derives per library
+just bench-report                           # all of the above, then benches/report.sh writes BENCH.md (needs hyperfine, jq)
+HYPERFINE_ARGS="--runs 3" just bench        # fewer hyperfine runs
 ```
 
 **Tests must run with `--features proc-macro2`.** Without it, token types are the compiler's real `proc_macro`, which panics outside macro expansion. This is also why many doc examples are `no_run`/`ignore`.
@@ -44,5 +48,7 @@ Key cross-cutting conventions:
 ## Testing pattern
 
 Tests are round-trip checks: parse a token stream as `T`, assert the buffer is fully consumed, re-emit with `ToTokens`, and compare `to_string()` with the input (`check::<T>(quote! { ... })`). Unit tests live in `crates/parsyng-core/src/ast/tests.rs` plus per-module `#[cfg(test)]` blocks; `tests/parse_crates.rs` round-trips every real-world source file in `tests/test_files/` as a `Crate` — drop a new `.rs` file there to extend coverage.
+
+Benchmarks live in `benches/`: `runtime/` (criterion; shared fixtures and an unsynn mini-grammar in `src/lib.rs`, a round-trip sanity test in `tests/`), `bench-comptime/` (one derive per library behind `syn`/`unsynn`/`moxy`/`parsyng` + `empty`/`small`/`big` features), `bench-quote-comptime/`, and `bench-expansion/` (consumer of `bench-comptime`'s `HeapSize`; `gen.sh` regenerates its 200 fixture structs). moxy 0.5 can't parse `crate::`/`super::` paths, so whole-file parse benches use `common_subset`.
 
 Examples under `examples/` are workspace members (each macro example is a `*-macros` proc-macro crate plus a consumer crate) and double as integration tests of the helper attributes; build them with `cargo build --workspace`.

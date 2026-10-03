@@ -1,46 +1,12 @@
-#![cfg_attr(feature = "unsynn", recursion_limit = "512")]
-//! Compile-time cost of each library's quasi-quoting macro alone: the crate
-//! expands the same template (`empty`, `small` or `big`) with `quote`,
-//! `unsynn`, `moxy` or `parsyng-core`.
-
-// Each feature combination uses a different subset of the macros and imports.
-#![allow(unused_imports, unused_macros)]
-
-use proc_macro::TokenStream;
-
-cfg_select! {
-    feature = "parsyng-core" => {
-        use parsyng_core::{format_ident, quote};
-        use parsyng_core as parsyng;
-        macro_rules! expand {
-            ($template:ident, $id:ident) => { $template!(quote, (#$id)) };
-        }
-    }
-    feature = "quote" => {
-        use quote::{format_ident, quote};
-        macro_rules! expand {
-            ($template:ident, $id:ident) => { $template!(quote, (#$id)) };
-        }
-    }
-    feature = "unsynn" => {
-        use unsynn::{ToTokens, format_ident, quote};
-        macro_rules! expand {
-            ($template:ident, $id:ident) => { $template!(quote, (#$id)) };
-        }
-    }
-    feature = "moxy" => {
-        use moxy::template as quote;
-        macro_rules! format_ident {
-            ($name:literal) => { moxy::token::ident!($name) };
-        }
-        macro_rules! expand {
-            ($template:ident, $id:ident) => { $template!(quote, ({{ $id }})) };
-        }
-    }
-    _ => {}
-}
+//! Shared fixtures for the runtime benchmarks.
+//!
+//! The quote templates are written once as `macro_rules!` callbacks taking the
+//! quasi-quoting macro to invoke and the interpolation syntax of the ident
+//! (`(#ident)` for quote/parsyng/unsynn, `({{ ident }})` for moxy), so every
+//! library expands exactly the same tokens.
 
 /// Small `impl` block, the same as `bench-quote-comptime`'s `small` case.
+#[macro_export]
 macro_rules! small_template {
     ($($m:ident)::+, ($($id:tt)+)) => {
         $($m)::+! {
@@ -59,6 +25,7 @@ macro_rules! small_template {
 }
 
 /// A serde-generated `Deserialize` impl (~180 lines).
+#[macro_export]
 macro_rules! big_template {
     ($($m:ident)::+, ($($id:tt)+)) => {
         $($m)::+! {
@@ -244,27 +211,142 @@ macro_rules! big_template {
     };
 }
 
-#[proc_macro]
-pub fn macro_bench(_: TokenStream) -> TokenStream {
-    // EMPTY
-    #[cfg(feature = "empty")]
-    {
-        quote! {};
+/// A `DeriveInput`-shaped struct: attributes, lifetime/type/const generics, a
+/// where-clause and a mix of field types.
+pub const DERIVE_INPUT: &str = r#"
+#[derive(Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Config<'a, T: Clone + Default, const N: usize>
+where
+    T: Send + 'static,
+{
+    /// The name.
+    pub name: &'a str,
+    pub(crate) values: Vec<T>,
+    #[serde(default)]
+    pub enabled: bool,
+    count: [u8; N],
+    map: std::collections::HashMap<String, Option<Box<dyn Fn() -> T + Send>>>,
+    pub cb: fn(&mut T, usize) -> Result<(), String>,
+    inner: Option<Vec<(u32, &'a [T])>>,
+    pub id: u64,
+    ratio: f64,
+    marker: core::marker::PhantomData<*const T>,
+}
+"#;
+
+/// Real-world source files (from tokio) used for whole-file parsing, shared
+/// with `parsyng-core`'s round-trip tests.
+pub const FILES: &[(&str, &str)] = &[
+    ("broadcast", include_str!("../../../crates/parsyng-core/tests/test_files/broadcast.rs")),
+    ("delay_queue", include_str!("../../../crates/parsyng-core/tests/test_files/delay_queue.rs")),
+    ("entry", include_str!("../../../crates/parsyng-core/tests/test_files/entry.rs")),
+    ("local", include_str!("../../../crates/parsyng-core/tests/test_files/local.rs")),
+];
+
+/// The top-level items of `src` that moxy parses *faithfully* (re-emitting
+/// the same tokens), re-emitted as source.
+///
+/// moxy 0.5 rejects `crate::`/`super::`/`self::` paths, so whole real-world
+/// files never parse, and it silently drops some statements (e.g. `while`
+/// loops in some positions). This subset lets all full Rust parsers do the
+/// same work on the same input.
+///
+/// # Panics
+/// Panics if `src` is not valid Rust according to syn.
+#[must_use]
+pub fn common_subset(src: &str) -> String {
+    use quote::ToTokens as _;
+
+    syn::parse_file(src)
+        .unwrap()
+        .items
+        .iter()
+        .map(|item| item.to_token_stream().to_string())
+        .filter(|item| {
+            moxy::parse!(item as moxy::ast::Item).is_ok_and(|parsed| {
+                // moxy loses joint spacing in macro bodies; ignore whitespace.
+                let strip = |s: &str| s.split_whitespace().collect::<String>();
+                strip(&moxy::token::ToTokenStream::to_token_stream(&parsed).to_string()) == strip(item)
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Field names used by the `repetition` quote case.
+#[must_use]
+pub fn field_names(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("field_{i}")).collect()
+}
+
+/// A minimal hand-written grammar for [`DERIVE_INPUT`]-like structs.
+///
+/// unsynn ships no Rust grammar, so this only recognises what a derive needs
+/// (attributes, visibility, name, opaque generics/where-clause, named fields
+/// with opaque types). It is *not* equivalent to a full `DeriveInput` parser.
+pub mod unsynn_grammar {
+    #![allow(missing_docs, clippy::result_large_err)]
+    use unsynn::{
+        BraceGroup, BraceGroupContaining, BracketGroup, Colon, Comma, CommaDelimitedVec, Cons,
+        Either, Except, Ident, ParenthesisGroup, Pound, PunctAny, TokenTree, keyword, unsynn,
+    };
+
+    keyword! {
+        pub KwStruct = "struct";
+        pub KwPub = "pub";
+        pub KwWhere = "where";
     }
 
-    // SMALL
-    #[cfg(feature = "small")]
-    {
-        let ident = format_ident!("Bench");
-        expand!(small_template, ident);
-    }
+    /// `<` / `>` regardless of spacing (`>>`, `<'a` are lexed as joint).
+    pub type AnyLt = PunctAny<'<'>;
+    pub type AnyGt = PunctAny<'>'>;
 
-    // BIG
-    #[cfg(feature = "big")]
-    {
-        let ident = format_ident!("Response");
-        expand!(big_template, ident);
-    }
+    unsynn! {
+        pub struct Attribute {
+            pub pound: Pound,
+            pub body: BracketGroup,
+        }
 
-    TokenStream::new()
+        pub struct Visibility {
+            pub kw: KwPub,
+            pub restriction: Option<ParenthesisGroup>,
+        }
+
+        /// One token tree, treating `<...>` as a nested unit.
+        pub enum AngleTokenTree {
+            Arrow(Cons<PunctAny<'-'>, AnyGt>),
+            Nested(Cons<AnyLt, Vec<AngleTokenTree>, AnyGt>),
+            Token(Cons<Except<Either<AnyLt, AnyGt>>, TokenTree>),
+        }
+
+        pub struct Field {
+            pub attrs: Vec<Attribute>,
+            pub vis: Option<Visibility>,
+            pub name: Ident,
+            pub colon: Colon,
+            pub ty: Vec<Cons<Except<Comma>, AngleTokenTree>>,
+        }
+
+        pub struct Generics {
+            pub lt: AnyLt,
+            pub params: Vec<AngleTokenTree>,
+            pub gt: AnyGt,
+        }
+
+        pub struct WhereClause {
+            pub kw: KwWhere,
+            pub predicates: Vec<Cons<Except<BraceGroup>, AngleTokenTree>>,
+        }
+
+        pub struct DeriveStruct {
+            pub attrs: Vec<Attribute>,
+            pub vis: Option<Visibility>,
+            pub kw: KwStruct,
+            pub name: Ident,
+            pub generics: Option<Generics>,
+            pub where_clause: Option<WhereClause>,
+            pub fields: BraceGroupContaining<CommaDelimitedVec<Field>>,
+        }
+    }
 }

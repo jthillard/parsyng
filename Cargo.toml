@@ -5,9 +5,10 @@ members = [
   "crates/parsyng-proc-macros",
   "crates/parsyng-core",
 
-  "benches",
+  "benches/runtime",
   "benches/bench-comptime",
   "benches/bench-quote-comptime",
+  "benches/bench-expansion",
 
   "examples/simple-use",
   "examples/simple-use-macros",
@@ -36,13 +37,7 @@ categories = ["development-tools::procedural-macro-helpers"]
 parsyng-proc-macros = { version = "0.1.0", path = "./crates/parsyng-proc-macros" }
 parsyng-core = { version = "0.1.0", path = "./crates/parsyng-core" }
 
-[dev-dependencies]
-quote = "1"
-
 [features]
 proc-macro2 = ["parsyng-core/proc-macro2"]
 debug-pretty = ["parsyng-core/debug-pretty"]
 
-[[bench]]
-name = "parsyng-quote"
-required-features = ["proc-macro2"]

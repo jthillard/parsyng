@@ -1,0 +1,27 @@
+[package]
+name = "parsyng-bench-runtime"
+description = "Runtime benchmarks of `parsyng` against syn/quote, unsynn and moxy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+repository = "https://github.com/supersurviveur/parsyng"
+
+[dependencies]
+moxy = { version = "0.5", default-features = false, features = ["token", "ast", "template"] }
+parsyng-core = { path = "../../crates/parsyng-core", features = ["proc-macro2"] }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+unsynn = { version = "0.3", default-features = false, features = ["proc_macro2"] }
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "quote"
+harness = false
+
+[[bench]]
+name = "parse"
+harness = false
