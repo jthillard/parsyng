@@ -136,7 +136,9 @@ impl EnumVariant {
     /// any.
     #[must_use]
     pub fn discriminant(&self) -> Option<&TokenStreamUntilComma> {
-        self.discriminant.as_ref().map(|(_, discriminant)| discriminant)
+        self.discriminant
+            .as_ref()
+            .map(|(_, discriminant)| discriminant)
     }
 }
 

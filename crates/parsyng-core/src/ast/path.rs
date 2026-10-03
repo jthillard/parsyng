@@ -8,13 +8,14 @@ use crate::ast::tokens::{Eq, RArrow};
 use crate::combinator::Either;
 use crate::{
     ast::{
+        expression::{Expression, parse_generic_const_arg},
         item::Lifetime,
         tokens::{Comma, Gt, Lt, PathSep},
         r#type::Type,
     },
     combinator::{Punctuated, StopOnError},
-    error::Diagnostics,
-    parse::{Parse, Peekable},
+    error::{Diagnostics, Result},
+    parse::{Parse, ParseBuffer, Peekable},
     proc_macro::{Ident, Span},
 };
 
@@ -95,6 +96,21 @@ impl TypePathSegment {
     pub fn span(&self) -> Span {
         self.path_ident.span()
     }
+
+    /// Parse a segment of a path in expression position, where generic
+    /// arguments require the turbofish (`f::<T>`) and the `Fn(A) -> B`
+    /// sugar doesn't apply — so `a < b` stays a comparison.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+    pub(crate) fn parse_expression(input: &mut ParseBuffer) -> Result<Self> {
+        Ok(Self {
+            path_ident: input.parse()?,
+            args: input
+                .try_parse::<(PathSep, GenericArgs)>()
+                .ok()
+                .map(|(sep, generics)| (Some(sep), Either::First(generics))),
+        })
+    }
 }
 
 /// The `Fn`-trait sugar form of a path segment's arguments: `(A, B) -> C`.
@@ -125,8 +141,8 @@ pub struct GenericArgs {
     last_token: Gt,
 }
 
-/// One argument inside [`GenericArgs`]: a type, a lifetime, or an associated
-/// type binding.
+/// One argument inside [`GenericArgs`]: a type, a lifetime, an associated
+/// type binding, or a const argument.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
 #[derive(Clone, Debug)]
@@ -143,6 +159,13 @@ pub enum GenericArg {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
     Bindings(Ident, Option<Box<GenericArgs>>, Eq, Box<Type>),
+    /// A const argument: a `{ ... }` block, a literal, or a negated
+    /// literal, e.g. `{ N + 1 }` in `f::<{ N + 1 }>()`. A bare `N` parses
+    /// as a [`Type`](Self::Type) argument, since the two can't be told
+    /// apart syntactically.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+    Const(Box<Expression>),
 }
 
 impl ToTokens for TypePathSegment {
@@ -169,6 +192,7 @@ impl ToTokens for GenericArg {
             Self::Type(ty) => ty.to_tokens(tokens),
             Self::Lifetime(lifetime) => lifetime.to_tokens(tokens),
             Self::Bindings(ident, generics, eq, ty) => (ident, generics, eq, ty).to_tokens(tokens),
+            Self::Const(expr) => expr.to_tokens(tokens),
         }
     }
 }
@@ -181,6 +205,8 @@ impl Parse for GenericArg {
             Ok(Self::Type(Box::new(ty)))
         } else if let Ok(lifetime) = input.try_parse() {
             Ok(Self::Lifetime(lifetime))
+        } else if let Ok(expr) = input.try_advance(parse_generic_const_arg) {
+            Ok(Self::Const(Box::new(expr)))
         } else {
             Err(Diagnostics::new_error_spanned(
                 "Expected a generic argument",

@@ -118,6 +118,18 @@ pub struct TypePath {
 }
 
 impl TypePath {
+    /// Parse a path in expression position: every segment goes through
+    /// [`TypePathSegment::parse_expression`] (turbofish-only generics).
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+    pub(crate) fn parse_expression(input: &mut ParseBuffer) -> crate::error::Result<Self> {
+        Ok(Self {
+            start_token: input.try_parse::<PathSep>().ok(),
+            root: TypePathSegment::parse_expression(input)?,
+            paths: parse_expression_segments(input),
+        })
+    }
+
     /// The span of this path's first token (its leading `::`, if any).
     #[must_use]
     pub fn span(&self) -> Span {
@@ -340,8 +352,35 @@ impl Parse for TypeBareFn {
     }
 }
 
-impl Parse for TypeQualifiedPath {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+/// The `::segment` tail of an expression path, each segment parsed with
+/// [`TypePathSegment::parse_expression`].
+fn parse_expression_segments(input: &mut ParseBuffer) -> Vec<(PathSep, TypePathSegment)> {
+    let mut paths = Vec::new();
+    while let Ok(pair) = input.try_advance(|input| {
+        Ok((
+            input.parse::<PathSep>()?,
+            TypePathSegment::parse_expression(input)?,
+        ))
+    }) {
+        paths.push(pair);
+    }
+    paths
+}
+
+impl TypeQualifiedPath {
+    /// Parse a qualified path in expression position (`<T as Trait>::f`):
+    /// the `<T as Trait>` header is parsed as for types, the trailing
+    /// segments with turbofish-only generics.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#qualified-paths>
+    pub(crate) fn parse_expression(input: &mut ParseBuffer) -> crate::error::Result<Self> {
+        Self::parse_with(input, TypePathSegment::parse_expression)
+    }
+
+    fn parse_with(
+        input: &mut ParseBuffer,
+        segment: fn(&mut ParseBuffer) -> crate::error::Result<TypePathSegment>,
+    ) -> crate::error::Result<Self> {
         let lt_token = input.parse()?;
         let ty = Box::new(input.parse()?);
         let as_token = if let Ok(as_token) = input.try_parse() {
@@ -352,9 +391,11 @@ impl Parse for TypeQualifiedPath {
         let gt_token = input.parse()?;
         let mut paths = Vec::new();
         let first_sep: PathSep = input.parse()?;
-        paths.push((first_sep, input.parse()?));
-        while let Ok(sep) = input.try_parse() {
-            paths.push((sep, input.parse()?));
+        paths.push((first_sep, segment(input)?));
+        while let Ok(pair) =
+            input.try_advance(|input| Ok((input.parse::<PathSep>()?, segment(input)?)))
+        {
+            paths.push(pair);
         }
         Ok(Self {
             lt_token,
@@ -363,6 +404,12 @@ impl Parse for TypeQualifiedPath {
             gt_token,
             paths,
         })
+    }
+}
+
+impl Parse for TypeQualifiedPath {
+    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        Self::parse_with(input, TypePathSegment::parse)
     }
 }
 

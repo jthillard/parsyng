@@ -8,12 +8,20 @@
 //! distinction matters for parsing statements: an [`ExpressionWithBlock`]
 //! can appear as a statement without a trailing `;`, while an
 //! [`ExpressionWithoutBlock`] needs one (except in tail position).
-//! [`Expression`] itself is a thin wrapper over the two.
+//! [`Expression`] itself is a thin wrapper over the two. A block-like
+//! expression can still be an operand (`match x { .. } + 1`,
+//! `unsafe { .. }.f()`): it then sits inside an [`ExpressionWithoutBlock`]
+//! node. In statement and match-arm position a leading block-like
+//! expression ends at its `}` unless a postfix `.`/`?` follows, as in
+//! rustc.
 //!
-//! Coverage is close to the full stable grammar, let-chains included. The
-//! remaining gaps: slice/range/box patterns (see
+//! Coverage is the full stable grammar, let-chains, qualified paths
+//! (`<T as Trait>::f`), raw borrows (`&raw const x`) and expression
+//! attributes included. The remaining gaps: slice/range/box patterns (see
 //! [`ast::pattern`](crate::ast::pattern)) and unstable syntax such as
-//! `try`/`yeet` blocks.
+//! `try`/`yeet` blocks. One token-level caveat: `x.0.1` (lexed with a
+//! `0.1` float literal) is split into two [`TupleIndexExpression`]s and
+//! re-emitted as `x.0 .1`, which means the same thing.
 //!
 //! [`ExpressionWithoutBlock::parse`] is a hand-written precedence-climbing
 //! parser — see the doc comment on the `impl ExpressionWithoutBlock` block
@@ -25,6 +33,7 @@ use crate::{ToTokens, proc_macro::Delimiter};
 
 use crate::{
     ast::{
+        attributes::{Attribute, parse_outer_attributes},
         delimiter::{Braced, Bracketed, Parenthesized},
         item::Lifetime,
         literal::{Literal, LiteralNumber},
@@ -35,15 +44,15 @@ use crate::{
             And, AndAnd, AndEq, As, Async, Await, Break, Caret, CaretEq, Colon, Comma, Const,
             Continue, Dot, DotDot, DotDotEq, Else, Eq, EqEq, FatArrow, For, Ge, Gt, If, In, Le,
             Let, Loop, Lt, Match, Minus, MinusEq, Move, Mut, Ne, Not, Or, OrEq, OrOr, PathSep,
-            Percent, PercentEq, Plus, PlusEq, Question, RArrow, Return, Semicolon, Shl, ShlEq,
-            Shr, ShrEq, Slash, SlashEq, Star, StarEq, Unsafe, While,
+            Percent, PercentEq, Plus, PlusEq, Pound, Question, RArrow, Raw, Return, Semicolon, Shl,
+            ShlEq, Shr, ShrEq, Slash, SlashEq, Star, StarEq, Unsafe, While,
         },
-        r#type::{Type, TypePath},
+        r#type::{Type, TypePath, TypeQualifiedPath},
     },
     combinator::{Punctuated, StopOnError},
     error::{Diagnostics, Result},
     parse::{Parse, ParseBuffer},
-    proc_macro::{Group, Ident, TokenTree},
+    proc_macro::{Group, Ident, Span, TokenTree},
 };
 
 /// Wrap an [`ExpressionWithoutBlock`] in the [`Expression`] enum — used
@@ -62,19 +71,37 @@ fn looks_like<T: Parse>(input: &ParseBuffer) -> bool {
     input.clone().try_parse::<T>().is_ok()
 }
 
-/// An expression parsed with struct literals suppressed, matching the
-/// original `Expression::parse`'s WithBlock-first ordering: used for
+/// An expression parsed with struct literals suppressed: used for
 /// [`Conditions`] and [`ForExpression`]'s iterator expression, where a bare
 /// `Path { ... }` would be ambiguous with the construct's own trailing
 /// block.
 fn parse_restricted_scrutinee(input: &mut ParseBuffer) -> Result<Expression> {
-    if let Ok(block) = input.try_parse() {
-        Ok(Expression::WithBlock(Box::new(block)))
-    } else {
-        Ok(wrap(ExpressionWithoutBlock::parse_no_struct_literal(
-            input,
-        )?))
+    ExpressionWithoutBlock::parse_top(input, false)
+}
+
+/// A const generic argument that can't be mistaken for a type: a
+/// `{ ... }` block, a literal, or `-` followed by a literal.
+///
+/// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+pub(crate) fn parse_generic_const_arg(input: &mut ParseBuffer) -> Result<Expression> {
+    if let Some(group) = input.peek_group()
+        && group.delimiter() == Delimiter::Brace
+    {
+        return Ok(Expression::WithBlock(Box::new(ExpressionWithBlock::Block(
+            input.parse()?,
+        ))));
     }
+    if let Ok(literal) = input.try_parse() {
+        return Ok(wrap(ExpressionWithoutBlock::Literal(literal)));
+    }
+    let minus = input.parse()?;
+    let literal = input.parse()?;
+    Ok(wrap(ExpressionWithoutBlock::Unary(
+        UnaryExpression::Negation(NegationExpression {
+            op: NegOp::Neg(minus),
+            expr: wrap(ExpressionWithoutBlock::Literal(literal)),
+        }),
+    )))
 }
 
 /// Any expression: either [`WithBlock`](Self::WithBlock) or
@@ -108,6 +135,11 @@ pub enum ExpressionWithoutBlock {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/expressions/path-expr.html>
     Path(TypePath),
+    /// A qualified path used as an expression, e.g. `<T as Trait>::f` or
+    /// `<Vec<u8>>::new`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#qualified-paths>
+    QualifiedPath(TypeQualifiedPath),
     /// `expr.await`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/expressions/await-expr.html>
@@ -132,7 +164,7 @@ pub enum ExpressionWithoutBlock {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/expressions/field-expr.html>
     Field(FieldExpression),
-    /// `return expr`.
+    /// `return` or `return expr`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/expressions/return-expr.html>
     Return(ReturnExpression),
@@ -204,6 +236,10 @@ pub enum ExpressionWithoutBlock {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
     MacroCall(MacroCallExpression),
+    /// An expression preceded by outer attributes, e.g. `#[cfg(x)] a`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/expressions.html#expression-attributes>
+    Attributed(AttributedExpression),
 }
 
 /// An expression that ends in a `{ ... }` block: a bare block, `unsafe`
@@ -374,6 +410,7 @@ pub struct MatchExpression {
 /// Reference: <https://doc.rust-lang.org/reference/expressions/match-expr.html>
 #[derive(Clone, Debug)]
 pub struct MatchArm {
+    attrs: Vec<Attribute>,
     pat: Pattern,
     guard: Option<(If, Expression)>,
     fat_arrow: FatArrow,
@@ -417,7 +454,7 @@ pub struct IndexExpression {
     expr: Expression,
     index: Bracketed<Expression>,
 }
-/// A tuple expression: `(a, b, c)`. Parsing rejects zero elements and a
+/// A tuple expression: `()`, `(a,)`, or `(a, b, c)`. Parsing rejects a
 /// single element without a trailing comma, to disambiguate from
 /// [`GroupedExpression`] (`(expr)`).
 ///
@@ -466,13 +503,13 @@ pub struct FieldExpression {
     field: Ident,
 }
 
-/// `return expr`.
+/// `return` or `return expr`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/return-expr.html>
 #[derive(Clone, Debug)]
 pub struct ReturnExpression {
     return_token: Return,
-    expr: Expression,
+    expr: Option<Expression>,
 }
 
 /// `continue` / `continue 'label`.
@@ -526,7 +563,18 @@ pub struct GroupedExpression {
     group: Parenthesized<Expression>,
 }
 
-/// `&expr`, `&mut expr`, or the double-reference shorthand `&&expr`/`&&mut expr`.
+/// An expression preceded by outer attributes: `#[attr] expr`. The
+/// attributes apply to the whole expression that follows.
+///
+/// Reference: <https://doc.rust-lang.org/reference/expressions.html#expression-attributes>
+#[derive(Clone, Debug)]
+pub struct AttributedExpression {
+    attrs: Vec<Attribute>,
+    expr: Expression,
+}
+
+/// `&expr`, `&mut expr`, the raw borrows `&raw const expr`/`&raw mut expr`,
+/// or the double-reference shorthand `&&expr`/`&&mut expr`.
 ///
 /// The double form keeps the original `&&` token intact (see [`BorrowAmp`])
 /// rather than desugaring into two nested borrows, so it round-trips
@@ -536,6 +584,9 @@ pub struct GroupedExpression {
 #[derive(Clone, Debug)]
 pub struct BorrowExpression {
     amp: BorrowAmp,
+    /// `raw` plus `const` for `&raw const`; `raw` alone for `&raw mut`,
+    /// whose `mut` is in `mutability`.
+    raw: Option<(Raw, Option<Const>)>,
     mutability: Option<Mut>,
     expr: Expression,
 }
@@ -752,9 +803,8 @@ pub struct ClosureParam {
     ty: Option<(Colon, Type)>,
 }
 
-/// A struct expression: `Path { field: expr, field2, ..base }`. Numeric
-/// tuple-index field keys (`TupleStruct { 0: value }`) are not supported —
-/// only identifier-keyed fields.
+/// A struct expression: `Path { field: expr, field2, ..base }`, including
+/// numeric field keys (`TupleStruct { 0: value }`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/expressions/struct-expr.html>
 #[derive(Clone, Debug)]
@@ -770,13 +820,30 @@ pub struct StructExprFields {
     rest: Option<(DotDot, Box<Expression>)>,
 }
 
-/// One field inside a [`StructExprFields`] list.
+/// One field inside a [`StructExprFields`] list, with its outer attributes:
+/// `#[cfg(x)] field: expr`.
 #[derive(Clone, Debug)]
-pub enum StructExprField {
-    /// `field: expr`.
-    Named(Ident, Colon, Expression),
+pub struct StructExprField {
+    attrs: Vec<Attribute>,
+    kind: StructExprFieldKind,
+}
+
+/// The attribute-less part of a [`StructExprField`].
+#[derive(Clone, Debug)]
+pub enum StructExprFieldKind {
+    /// `field: expr` or `0: expr`.
+    Named(StructExprMember, Colon, Expression),
     /// `field` shorthand for `field: field`.
     Shorthand(Ident),
+}
+
+/// The key of a [`StructExprFieldKind::Named`] field.
+#[derive(Clone, Debug)]
+pub enum StructExprMember {
+    /// A named field: `field`.
+    Named(Ident),
+    /// A tuple-struct field index: `0`.
+    Unnamed(LiteralNumber),
 }
 
 /// A macro invocation used as an expression, e.g. `foo!(a, b)`.
@@ -795,52 +862,74 @@ pub struct MacroCallExpression {
 
 impl Parse for ExpressionWithoutBlock {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        Self::parse_top(input, true)
+        let span = input.span();
+        unwrap_without_block(Self::parse_top(input, true)?, span)
     }
 }
 
-impl ExpressionWithoutBlock {
-    /// Parse with struct-expression literals suppressed at every level of
-    /// the precedence chain below (not just the very first token) — used
-    /// by `if`/`while`/`match` scrutinees and `for`'s iterator expression,
-    /// where a bare `Path { ... }` would be ambiguous with the construct's
-    /// own trailing block. Nested sub-expressions (inside `(...)`,
-    /// `[...]`, call/index arguments) go back through the normal
-    /// unrestricted [`Parse`] impl, since those recurse via a fresh
-    /// [`Expression::parse`]/[`ExpressionWithoutBlock::parse`] call rather
-    /// than through `no_struct`-threaded helpers here.
-    pub(crate) fn parse_no_struct_literal(input: &mut ParseBuffer) -> Result<Self> {
-        Self::parse_top(input, false)
+/// Extract the [`ExpressionWithoutBlock`] from a precedence-chain result,
+/// rejecting a lone block-like expression (which only an [`Expression`] can
+/// hold).
+fn unwrap_without_block(expr: Expression, span: Span) -> Result<ExpressionWithoutBlock> {
+    match expr {
+        Expression::WithoutBlock(without_block) => Ok(*without_block),
+        Expression::WithBlock(_) => Err(Diagnostics::new_error_spanned(
+            "Expected an expression without block",
+            span,
+        )),
     }
+}
 
-    fn parse_top(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
-        // `return`/`break`/`continue`/closures swallow an optional or
-        // required trailing expression and can't themselves be used as an
-        // operand without parens (matching rustc) — so they're handled
-        // once, here, at the very top, rather than as part of the
-        // precedence chain below.
-        if let Some(ident) = input.peek_ident() {
-            #[allow(clippy::cmp_owned)]
-            let text = ident.to_string();
-            if text == "return" {
-                return Ok(Self::Return(input.parse()?));
+/// True if the next token can start an [`ExpressionWithBlock`]: one of its
+/// leading keywords, a `'label`, or a `{ ... }` group. A cheap filter so
+/// that [`ExpressionWithoutBlock::parse_primary`] only attempts the full
+/// [`ExpressionWithBlock`] parse when it has a chance to succeed.
+fn starts_block_like(input: &mut ParseBuffer) -> bool {
+    match input.peek() {
+        Some(TokenTree::Ident(ident)) => matches!(
+            ident.to_string().as_str(),
+            "unsafe" | "if" | "loop" | "while" | "for" | "match" | "async" | "const"
+        ),
+        Some(TokenTree::Punct(punct)) => punct.as_char() == '\'',
+        Some(TokenTree::Group(group)) => group.delimiter() == Delimiter::Brace,
+        _ => false,
+    }
+}
+
+/// True if the next token is a postfix `.` (not the start of `..`) or `?` —
+/// the only operators that continue a block-like expression in statement
+/// position.
+pub(crate) fn continues_with_postfix(input: &ParseBuffer) -> bool {
+    looks_like::<Question>(input) || (looks_like::<Dot>(input) && !looks_like::<DotDot>(input))
+}
+
+/// Parse an expression in statement or match-arm-body position, following
+/// rustc: a leading block-like expression (`if`, `match`, `{ ... }`, ...)
+/// ends the expression at its closing `}`, so `{ a } - 1` is two
+/// statements — unless it's directly followed by a postfix `.`/`?`
+/// (`match x { ... }.len()`), in which case the whole operator chain is
+/// parsed.
+pub(crate) fn parse_statement_like(input: &mut ParseBuffer) -> Result<Expression> {
+    let mut fork = input.clone();
+    if let Ok(block) = fork.parse::<ExpressionWithBlock>()
+        && !continues_with_postfix(&fork)
+    {
+        *input = fork;
+        return Ok(Expression::WithBlock(Box::new(block)));
+    }
+    ExpressionWithoutBlock::parse_top(input, true)
+}
+
+impl ExpressionWithoutBlock {
+    /// The entry point of the precedence chain: leading outer attributes,
+    /// then the loosest-binding level.
+    fn parse_top(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
+        if looks_like::<Pound>(input) {
+            let attrs = parse_outer_attributes(input);
+            if !attrs.is_empty() {
+                let expr = Self::parse_top(input, allow_struct)?;
+                return Ok(wrap(Self::Attributed(AttributedExpression { attrs, expr })));
             }
-            if text == "break" {
-                return Ok(Self::Break(input.parse()?));
-            }
-            if text == "continue" {
-                return Ok(Self::Continue(input.parse()?));
-            }
-            // `async {}`/`async move {}` (a block, not a closure) is
-            // handled by `ExpressionWithBlock`, tried before this type
-            // everywhere `ExpressionWithoutBlock` is reachable — so
-            // "async" reaching here can only be an async closure.
-            if text == "move" || text == "async" {
-                return Ok(Self::Closure(input.parse()?));
-            }
-        }
-        if looks_like::<OrOr>(input) || looks_like::<Or>(input) {
-            return Ok(Self::Closure(input.parse()?));
         }
         Self::parse_assignment(input, allow_struct)
     }
@@ -851,6 +940,14 @@ impl ExpressionWithoutBlock {
 /// `^` → `&` → shift → additive → multiplicative → `as` → unary prefix →
 /// postfix chain → primary — see
 /// <https://doc.rust-lang.org/reference/expressions.html#expression-precedence>.
+///
+/// Every level returns an [`Expression`]: a block-like expression
+/// (`if`, `match`, `{ ... }`, ...) is a valid primary operand, and comes
+/// back as [`Expression::WithBlock`] only when no operator follows it.
+///
+/// `return`/`break`/`continue` and closures are handled at the unary
+/// level: they swallow the whole remaining expression as their operand,
+/// so e.g. `a || return b` and `x = |y| y + 1` parse as in rustc.
 ///
 /// Several single-char operators are textual prefixes of a longer operator
 /// used at a *different*, looser level (`&` vs `&&`/`&=`, `|` vs `||`/`|=`,
@@ -863,19 +960,25 @@ impl ExpressionWithoutBlock {
 /// space-separated `& &`.
 ///
 /// Every level threads `allow_struct` straight through to its tighter
-/// callee — see [`parse_no_struct_literal`](Self::parse_no_struct_literal).
+/// callee. It is `false` for `if`/`while`/`match` scrutinees and `for`'s
+/// iterator expression, where a bare `Path { ... }` would be ambiguous with
+/// the construct's own trailing block; nested sub-expressions (inside
+/// `(...)`, `[...]`, call/index arguments) go back through the
+/// unrestricted [`Expression::parse`].
 impl ExpressionWithoutBlock {
-    fn parse_assignment(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_assignment(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let lhs = Self::parse_range(input, allow_struct)?;
         macro_rules! compound {
             ($tok:ty, $variant:ident) => {
                 if let Ok(op) = input.try_parse::<$tok>() {
                     let rhs = Self::parse_assignment(input, allow_struct)?;
-                    return Ok(Self::CompoundAssignment(CompoundAssignmentExpression {
-                        lhs: wrap(lhs),
-                        op: CompoundAssignOp::$variant(op),
-                        rhs: wrap(rhs),
-                    }));
+                    return Ok(wrap(Self::CompoundAssignment(
+                        CompoundAssignmentExpression {
+                            lhs,
+                            op: CompoundAssignOp::$variant(op),
+                            rhs,
+                        },
+                    )));
                 }
             };
         }
@@ -895,100 +998,115 @@ impl ExpressionWithoutBlock {
             && let Ok(eq) = input.try_parse::<Eq>()
         {
             let rhs = Self::parse_assignment(input, allow_struct)?;
-            return Ok(Self::Assignment(AssignmentExpression {
-                lhs: wrap(lhs),
+            return Ok(wrap(Self::Assignment(AssignmentExpression {
+                lhs,
                 eq,
-                rhs: wrap(rhs),
-            }));
+                rhs,
+            })));
         }
         Ok(lhs)
+    }
+
+    /// The optional end of a range: absent if nothing parses, and — in a
+    /// no-struct context — absent before a `{`, which is the enclosing
+    /// construct's block (`for i in 0.. { ... }`).
+    fn parse_range_end(input: &mut ParseBuffer, allow_struct: bool) -> Option<Expression> {
+        if !allow_struct
+            && let Some(group) = input.peek_group()
+            && group.delimiter() == Delimiter::Brace
+        {
+            return None;
+        }
+        input
+            .try_advance(|input| Self::parse_or(input, allow_struct))
+            .ok()
     }
 
     /// `a..b`, `a..`, `..b`, `..`, `a..=b`, or `..=b` — sitting below `||`
     /// and above assignment; the end (like the start) is parsed one level
     /// up (`||`), not recursively, since ranges don't chain and need
     /// parens to combine with looser operators.
-    fn parse_range(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_range(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         // the 3-char token must be tried before its 2-char prefix
         if let Ok(dot_eq) = input.try_parse::<DotDotEq>() {
-            let end = Self::parse_or(input, allow_struct).ok().map(wrap);
-            return Ok(Self::Range(RangeExpression {
+            let end = Self::parse_range_end(input, allow_struct);
+            return Ok(wrap(Self::Range(RangeExpression {
                 start: None,
                 dot: None,
                 dot_eq: Some(dot_eq),
                 end,
-            }));
+            })));
         }
         if let Ok(dot) = input.try_parse::<DotDot>() {
-            let end = Self::parse_or(input, allow_struct).ok().map(wrap);
-            return Ok(Self::Range(RangeExpression {
+            let end = Self::parse_range_end(input, allow_struct);
+            return Ok(wrap(Self::Range(RangeExpression {
                 start: None,
                 dot: Some(dot),
                 dot_eq: None,
                 end,
-            }));
+            })));
         }
         let lhs = Self::parse_or(input, allow_struct)?;
         if let Ok(dot_eq) = input.try_parse::<DotDotEq>() {
-            let end = Self::parse_or(input, allow_struct).ok().map(wrap);
-            return Ok(Self::Range(RangeExpression {
-                start: Some(wrap(lhs)),
+            let end = Self::parse_range_end(input, allow_struct);
+            return Ok(wrap(Self::Range(RangeExpression {
+                start: Some(lhs),
                 dot: None,
                 dot_eq: Some(dot_eq),
                 end,
-            }));
+            })));
         }
         if let Ok(dot) = input.try_parse::<DotDot>() {
-            let end = Self::parse_or(input, allow_struct).ok().map(wrap);
-            return Ok(Self::Range(RangeExpression {
-                start: Some(wrap(lhs)),
+            let end = Self::parse_range_end(input, allow_struct);
+            return Ok(wrap(Self::Range(RangeExpression {
+                start: Some(lhs),
                 dot: Some(dot),
                 dot_eq: None,
                 end,
+            })));
+        }
+        Ok(lhs)
+    }
+
+    fn parse_or(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
+        let mut lhs = Self::parse_and(input, allow_struct)?;
+        while let Ok(op) = input.try_parse::<OrOr>() {
+            let rhs = Self::parse_and(input, allow_struct)?;
+            lhs = wrap(Self::Binary(BinaryExpression {
+                lhs,
+                op: BinOp::Or(op),
+                rhs,
             }));
         }
         Ok(lhs)
     }
 
-    fn parse_or(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
-        let mut lhs = Self::parse_and(input, allow_struct)?;
-        while let Ok(op) = input.try_parse::<OrOr>() {
-            let rhs = Self::parse_and(input, allow_struct)?;
-            lhs = Self::Binary(BinaryExpression {
-                lhs: wrap(lhs),
-                op: BinOp::Or(op),
-                rhs: wrap(rhs),
-            });
-        }
-        Ok(lhs)
-    }
-
-    fn parse_and(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_and(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_compare(input, allow_struct)?;
         while let Ok(op) = input.try_parse::<AndAnd>() {
             let rhs = Self::parse_compare(input, allow_struct)?;
-            lhs = Self::Binary(BinaryExpression {
-                lhs: wrap(lhs),
+            lhs = wrap(Self::Binary(BinaryExpression {
+                lhs,
                 op: BinOp::And(op),
-                rhs: wrap(rhs),
-            });
+                rhs,
+            }));
         }
         Ok(lhs)
     }
 
     /// Comparisons don't chain (`a < b < c` is a hard error in Rust), so
     /// this parses at most one, not a loop.
-    fn parse_compare(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_compare(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let lhs = Self::parse_bitor(input, allow_struct)?;
         macro_rules! cmp {
             ($tok:ty, $variant:ident) => {
                 if let Ok(op) = input.try_parse::<$tok>() {
                     let rhs = Self::parse_bitor(input, allow_struct)?;
-                    return Ok(Self::Binary(BinaryExpression {
-                        lhs: wrap(lhs),
+                    return Ok(wrap(Self::Binary(BinaryExpression {
+                        lhs,
                         op: BinOp::$variant(op),
-                        rhs: wrap(rhs),
-                    }));
+                        rhs,
+                    })));
                 }
             };
         }
@@ -1003,26 +1121,26 @@ impl ExpressionWithoutBlock {
             && let Ok(op) = input.try_parse::<Lt>()
         {
             let rhs = Self::parse_bitor(input, allow_struct)?;
-            return Ok(Self::Binary(BinaryExpression {
-                lhs: wrap(lhs),
+            return Ok(wrap(Self::Binary(BinaryExpression {
+                lhs,
                 op: BinOp::Lt(op),
-                rhs: wrap(rhs),
-            }));
+                rhs,
+            })));
         }
         if !looks_like::<Shr>(input)
             && let Ok(op) = input.try_parse::<Gt>()
         {
             let rhs = Self::parse_bitor(input, allow_struct)?;
-            return Ok(Self::Binary(BinaryExpression {
-                lhs: wrap(lhs),
+            return Ok(wrap(Self::Binary(BinaryExpression {
+                lhs,
                 op: BinOp::Gt(op),
-                rhs: wrap(rhs),
-            }));
+                rhs,
+            })));
         }
         Ok(lhs)
     }
 
-    fn parse_bitor(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_bitor(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_bitxor(input, allow_struct)?;
         loop {
             if looks_like::<OrOr>(input) || looks_like::<OrEq>(input) {
@@ -1030,11 +1148,11 @@ impl ExpressionWithoutBlock {
             }
             if let Ok(op) = input.try_parse::<Or>() {
                 let rhs = Self::parse_bitxor(input, allow_struct)?;
-                lhs = Self::Binary(BinaryExpression {
-                    lhs: wrap(lhs),
+                lhs = wrap(Self::Binary(BinaryExpression {
+                    lhs,
                     op: BinOp::BitOr(op),
-                    rhs: wrap(rhs),
-                });
+                    rhs,
+                }));
                 continue;
             }
             break;
@@ -1042,7 +1160,7 @@ impl ExpressionWithoutBlock {
         Ok(lhs)
     }
 
-    fn parse_bitxor(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_bitxor(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_bitand(input, allow_struct)?;
         loop {
             if looks_like::<CaretEq>(input) {
@@ -1050,11 +1168,11 @@ impl ExpressionWithoutBlock {
             }
             if let Ok(op) = input.try_parse::<Caret>() {
                 let rhs = Self::parse_bitand(input, allow_struct)?;
-                lhs = Self::Binary(BinaryExpression {
-                    lhs: wrap(lhs),
+                lhs = wrap(Self::Binary(BinaryExpression {
+                    lhs,
                     op: BinOp::BitXor(op),
-                    rhs: wrap(rhs),
-                });
+                    rhs,
+                }));
                 continue;
             }
             break;
@@ -1062,7 +1180,7 @@ impl ExpressionWithoutBlock {
         Ok(lhs)
     }
 
-    fn parse_bitand(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_bitand(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_shift(input, allow_struct)?;
         loop {
             if looks_like::<AndAnd>(input) || looks_like::<AndEq>(input) {
@@ -1070,11 +1188,11 @@ impl ExpressionWithoutBlock {
             }
             if let Ok(op) = input.try_parse::<And>() {
                 let rhs = Self::parse_shift(input, allow_struct)?;
-                lhs = Self::Binary(BinaryExpression {
-                    lhs: wrap(lhs),
+                lhs = wrap(Self::Binary(BinaryExpression {
+                    lhs,
                     op: BinOp::BitAnd(op),
-                    rhs: wrap(rhs),
-                });
+                    rhs,
+                }));
                 continue;
             }
             break;
@@ -1082,7 +1200,7 @@ impl ExpressionWithoutBlock {
         Ok(lhs)
     }
 
-    fn parse_shift(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_shift(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_additive(input, allow_struct)?;
         loop {
             macro_rules! op {
@@ -1091,11 +1209,11 @@ impl ExpressionWithoutBlock {
                         && let Ok(op) = input.try_parse::<$tok>()
                     {
                         let rhs = Self::parse_additive(input, allow_struct)?;
-                        lhs = Self::Binary(BinaryExpression {
-                            lhs: wrap(lhs),
+                        lhs = wrap(Self::Binary(BinaryExpression {
+                            lhs,
                             op: BinOp::$variant(op),
-                            rhs: wrap(rhs),
-                        });
+                            rhs,
+                        }));
                         continue;
                     }
                 };
@@ -1107,7 +1225,7 @@ impl ExpressionWithoutBlock {
         Ok(lhs)
     }
 
-    fn parse_additive(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_additive(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_multiplicative(input, allow_struct)?;
         loop {
             macro_rules! op {
@@ -1116,11 +1234,11 @@ impl ExpressionWithoutBlock {
                         && let Ok(op) = input.try_parse::<$tok>()
                     {
                         let rhs = Self::parse_multiplicative(input, allow_struct)?;
-                        lhs = Self::Binary(BinaryExpression {
-                            lhs: wrap(lhs),
+                        lhs = wrap(Self::Binary(BinaryExpression {
+                            lhs,
                             op: BinOp::$variant(op),
-                            rhs: wrap(rhs),
-                        });
+                            rhs,
+                        }));
                         continue;
                     }
                 };
@@ -1132,7 +1250,7 @@ impl ExpressionWithoutBlock {
         Ok(lhs)
     }
 
-    fn parse_multiplicative(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_multiplicative(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut lhs = Self::parse_cast(input, allow_struct)?;
         loop {
             macro_rules! op {
@@ -1141,11 +1259,11 @@ impl ExpressionWithoutBlock {
                         && let Ok(op) = input.try_parse::<$tok>()
                     {
                         let rhs = Self::parse_cast(input, allow_struct)?;
-                        lhs = Self::Binary(BinaryExpression {
-                            lhs: wrap(lhs),
+                        lhs = wrap(Self::Binary(BinaryExpression {
+                            lhs,
                             op: BinOp::$variant(op),
-                            rhs: wrap(rhs),
-                        });
+                            rhs,
+                        }));
                         continue;
                     }
                 };
@@ -1158,68 +1276,129 @@ impl ExpressionWithoutBlock {
         Ok(lhs)
     }
 
-    fn parse_cast(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_cast(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
         let mut expr = Self::parse_unary(input, allow_struct)?;
         while let Ok(as_token) = input.try_parse::<As>() {
             let ty = input.parse()?;
-            expr = Self::Cast(CastExpression {
-                expr: wrap(expr),
-                as_token,
-                ty,
-            });
+            expr = wrap(Self::Cast(CastExpression { expr, as_token, ty }));
         }
         Ok(expr)
     }
 
-    fn parse_unary(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    /// The borrow modifiers after `&`/`&&`: `raw const`, `raw mut`, or
+    /// just `mut`. `raw` alone is a plain borrow of a variable named `raw`.
+    fn parse_borrow_modifiers(
+        input: &mut ParseBuffer,
+    ) -> (Option<(Raw, Option<Const>)>, Option<Mut>) {
+        if let Ok((raw, const_token)) = input.try_parse::<(Raw, Const)>() {
+            return (Some((raw, Some(const_token))), None);
+        }
+        if let Ok((raw, mut_token)) = input.try_parse::<(Raw, Mut)>() {
+            return (Some((raw, None)), Some(mut_token));
+        }
+        (None, input.try_parse().ok())
+    }
+
+    fn parse_unary(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
+        // `return`/`break`/`continue`/closures swallow an optional or
+        // required trailing expression, so they take no postfix or binary
+        // operator of their own.
+        if let Some(ident) = input.peek_ident() {
+            match ident.to_string().as_str() {
+                "return" => return Ok(wrap(Self::Return(input.parse()?))),
+                "break" => return Ok(wrap(Self::Break(input.parse()?))),
+                "continue" => return Ok(wrap(Self::Continue(input.parse()?))),
+                "move" => return Ok(wrap(Self::Closure(input.parse()?))),
+                // `async { ... }`/`async move { ... }` is a block, parsed
+                // as a primary below; anything else is an async closure.
+                "async" => {
+                    if let Ok(closure) = input.try_parse() {
+                        return Ok(wrap(Self::Closure(closure)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if looks_like::<OrOr>(input) || looks_like::<Or>(input) {
+            return Ok(wrap(Self::Closure(input.parse()?)));
+        }
         // `&&expr` — a single `&&` token means two levels of borrow; kept
         // as one `BorrowAmp::Double` node (not two nested `Borrow`s) so it
         // round-trips as `&&`, not a synthesized `& &`.
         if let Ok(and_and) = input.try_parse::<AndAnd>() {
-            let mutability = input.try_parse().ok();
-            let expr = wrap(Self::parse_unary(input, allow_struct)?);
-            return Ok(Self::Unary(UnaryExpression::Borrow(BorrowExpression {
-                amp: BorrowAmp::Double(and_and),
-                mutability,
-                expr,
-            })));
+            let (raw, mutability) = Self::parse_borrow_modifiers(input);
+            let expr = Self::parse_unary(input, allow_struct)?;
+            return Ok(wrap(Self::Unary(UnaryExpression::Borrow(
+                BorrowExpression {
+                    amp: BorrowAmp::Double(and_and),
+                    raw,
+                    mutability,
+                    expr,
+                },
+            ))));
         }
         if let Ok(and_token) = input.try_parse::<And>() {
-            let mutability = input.try_parse().ok();
-            let expr = wrap(Self::parse_unary(input, allow_struct)?);
-            return Ok(Self::Unary(UnaryExpression::Borrow(BorrowExpression {
-                amp: BorrowAmp::Single(and_token),
-                mutability,
-                expr,
-            })));
+            let (raw, mutability) = Self::parse_borrow_modifiers(input);
+            let expr = Self::parse_unary(input, allow_struct)?;
+            return Ok(wrap(Self::Unary(UnaryExpression::Borrow(
+                BorrowExpression {
+                    amp: BorrowAmp::Single(and_token),
+                    raw,
+                    mutability,
+                    expr,
+                },
+            ))));
         }
         if let Ok(star) = input.try_parse::<Star>() {
-            let expr = wrap(Self::parse_unary(input, allow_struct)?);
-            return Ok(Self::Unary(UnaryExpression::Deref(DereferenceExpression {
-                star,
-                expr,
-            })));
+            let expr = Self::parse_unary(input, allow_struct)?;
+            return Ok(wrap(Self::Unary(UnaryExpression::Deref(
+                DereferenceExpression { star, expr },
+            ))));
         }
         if let Ok(minus) = input.try_parse::<Minus>() {
-            let expr = wrap(Self::parse_unary(input, allow_struct)?);
-            return Ok(Self::Unary(UnaryExpression::Negation(NegationExpression {
-                op: NegOp::Neg(minus),
-                expr,
-            })));
+            let expr = Self::parse_unary(input, allow_struct)?;
+            return Ok(wrap(Self::Unary(UnaryExpression::Negation(
+                NegationExpression {
+                    op: NegOp::Neg(minus),
+                    expr,
+                },
+            ))));
         }
         if let Ok(not) = input.try_parse::<Not>() {
-            let expr = wrap(Self::parse_unary(input, allow_struct)?);
-            return Ok(Self::Unary(UnaryExpression::Negation(NegationExpression {
-                op: NegOp::Not(not),
-                expr,
-            })));
+            let expr = Self::parse_unary(input, allow_struct)?;
+            return Ok(wrap(Self::Unary(UnaryExpression::Negation(
+                NegationExpression {
+                    op: NegOp::Not(not),
+                    expr,
+                },
+            ))));
         }
         Self::parse_postfix(input, allow_struct)
     }
 
-    fn parse_postfix(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
-        let primary = Self::parse_primary(input, allow_struct)?;
-        let mut wrapped = wrap(primary);
+    /// `x.0.1` lexes as `x`, `.`, `0.1` (a float literal): if the next
+    /// token is such a `<digits>.<digits>` float, consume it and split it
+    /// into its two tuple indices plus a synthesized `.`, all spanned at
+    /// the original literal.
+    fn parse_nested_tuple_index(
+        input: &mut ParseBuffer,
+    ) -> Option<(LiteralNumber, Dot, LiteralNumber)> {
+        let literal = input.peek_literal()?;
+        let text = literal.to_string();
+        let span = literal.span();
+        let (first, second) = text.split_once('.')?;
+        let is_index = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+        if !is_index(first) || !is_index(second) {
+            return None;
+        }
+        let first = LiteralNumber::from_digits(first, span);
+        let second = LiteralNumber::from_digits(second, span);
+        input.literal();
+        Some((first, Dot::new(span), second))
+    }
+
+    fn parse_postfix(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
+        let mut wrapped = Self::parse_primary(input, allow_struct)?;
         loop {
             if let Ok(question) = input.try_parse::<Question>() {
                 wrapped = wrap(Self::Try(TryExpression {
@@ -1238,6 +1417,19 @@ impl ExpressionWithoutBlock {
                         expr: wrapped,
                         dot,
                         await_token,
+                    }));
+                    continue;
+                }
+                if let Some((first, inner_dot, second)) = Self::parse_nested_tuple_index(input) {
+                    let inner = wrap(Self::TupleIndex(TupleIndexExpression {
+                        expr: wrapped,
+                        dot,
+                        index: first,
+                    }));
+                    wrapped = wrap(Self::TupleIndex(TupleIndexExpression {
+                        expr: inner,
+                        dot: inner_dot,
+                        index: second,
                     }));
                     continue;
                 }
@@ -1297,57 +1489,62 @@ impl ExpressionWithoutBlock {
             }
             break;
         }
-        match wrapped {
-            Expression::WithoutBlock(without_block) => Ok(*without_block),
-            Expression::WithBlock(_) => {
-                unreachable!("postfix parsing must keep non-block expression")
-            }
-        }
+        Ok(wrapped)
     }
 
-    fn parse_primary(input: &mut ParseBuffer, allow_struct: bool) -> Result<Self> {
+    fn parse_primary(input: &mut ParseBuffer, allow_struct: bool) -> Result<Expression> {
+        if starts_block_like(input)
+            && let Ok(block) = input.try_parse::<ExpressionWithBlock>()
+        {
+            return Ok(Expression::WithBlock(Box::new(block)));
+        }
         if let Some(ident) = input.peek_ident() {
             #[allow(clippy::cmp_owned)]
             if ident.to_string() == "_" {
-                return Ok(Self::Underscore(input.parse()?));
+                return Ok(wrap(Self::Underscore(input.parse()?)));
             }
         }
         if let Some(group) = input.peek_group() {
             return if group.delimiter() == Delimiter::Parenthesis {
                 if let Ok(tuple) = input.try_parse() {
-                    Ok(Self::Tuple(tuple))
+                    Ok(wrap(Self::Tuple(tuple)))
                 } else {
-                    Ok(Self::Grouped(input.parse()?))
+                    Ok(wrap(Self::Grouped(input.parse()?)))
                 }
             } else if group.delimiter() == Delimiter::Bracket {
-                Ok(Self::Array(input.parse()?))
+                Ok(wrap(Self::Array(input.parse()?)))
             } else {
                 Err(Diagnostics::new_error_spanned(
-                    "Expected an expression without block",
+                    "Expected an expression",
                     input.span(),
                 ))
             };
         }
         if let Ok(literal) = input.try_parse() {
-            return Ok(Self::Literal(literal));
+            return Ok(wrap(Self::Literal(literal)));
         }
         if let Ok(macro_call) = input.try_parse() {
-            return Ok(Self::MacroCall(macro_call));
+            return Ok(wrap(Self::MacroCall(macro_call)));
         }
-        if let Ok(path) = input.try_parse::<TypePath>() {
+        if looks_like::<Lt>(input) {
+            return Ok(wrap(Self::QualifiedPath(
+                TypeQualifiedPath::parse_expression(input)?,
+            )));
+        }
+        if let Ok(path) = input.try_advance(TypePath::parse_expression) {
             if allow_struct
                 && let Some(group) = input.peek_group()
                 && group.delimiter() == Delimiter::Brace
             {
-                return Ok(Self::Struct(StructExpression {
+                return Ok(wrap(Self::Struct(StructExpression {
                     fields: input.parse()?,
                     path,
-                }));
+                })));
             }
-            return Ok(Self::Path(path));
+            return Ok(wrap(Self::Path(path)));
         }
         Err(Diagnostics::new_error_spanned(
-            "Expected an expression without block",
+            "Expected an expression",
             input.span(),
         ))
     }
@@ -1382,18 +1579,13 @@ impl Parse for ExpressionWithBlock {
     }
 }
 
+/// Parses the whole precedence chain: a lone block-like expression comes
+/// back as [`Expression::WithBlock`], anything else (including a
+/// block-like expression used as an operand, e.g. `match x { .. } + 1`) as
+/// [`Expression::WithoutBlock`].
 impl Parse for Expression {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        if let Ok(block) = input.try_parse() {
-            Ok(Self::WithBlock(Box::new(block)))
-        } else if let Ok(without_block) = input.try_parse() {
-            Ok(Self::WithoutBlock(without_block))
-        } else {
-            Err(Diagnostics::new_error_spanned(
-                "Expected an expression",
-                input.span(),
-            ))
-        }
+        ExpressionWithoutBlock::parse_top(input, true)
     }
 }
 impl ToTokens for ExpressionWithoutBlock {
@@ -1401,6 +1593,7 @@ impl ToTokens for ExpressionWithoutBlock {
         match self {
             Self::Literal(literal) => literal.to_tokens(tokens),
             Self::Path(path) => path.to_tokens(tokens),
+            Self::QualifiedPath(path) => path.to_tokens(tokens),
             Self::Await(await_expression) => await_expression.to_tokens(tokens),
             Self::Index(index_expression) => index_expression.to_tokens(tokens),
             Self::Tuple(tuple_expression) => tuple_expression.to_tokens(tokens),
@@ -1436,6 +1629,7 @@ impl ToTokens for ExpressionWithoutBlock {
             Self::Closure(closure_expression) => closure_expression.to_tokens(tokens),
             Self::Struct(struct_expression) => struct_expression.to_tokens(tokens),
             Self::MacroCall(macro_call_expression) => macro_call_expression.to_tokens(tokens),
+            Self::Attributed(attributed_expression) => attributed_expression.to_tokens(tokens),
         }
     }
 }
@@ -1547,68 +1741,22 @@ impl Parse for ReturnExpression {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
             return_token: input.parse()?,
-            expr: input.parse()?,
-        })
-    }
-}
-
-impl Parse for AwaitExpression {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        Ok(Self {
-            expr: input.parse()?,
-            dot: input.parse()?,
-            await_token: input.parse()?,
-        })
-    }
-}
-
-impl Parse for IndexExpression {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        Ok(Self {
-            expr: input.parse()?,
-            index: input.parse()?,
-        })
-    }
-}
-
-impl Parse for TupleIndexExpression {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        Ok(Self {
-            expr: input.parse()?,
-            dot: input.parse()?,
-            index: input.parse()?,
-        })
-    }
-}
-
-impl Parse for FieldExpression {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        Ok(Self {
-            expr: input.parse()?,
-            dot: input.parse()?,
-            field: input.parse()?,
-        })
-    }
-}
-
-impl Parse for CallExpression {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        Ok(Self {
-            expr: input.parse()?,
-            params: input.parse()?,
+            expr: input.try_parse().ok(),
         })
     }
 }
 
 impl Parse for RangeExpression {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        match ExpressionWithoutBlock::parse_range(input, true)? {
-            ExpressionWithoutBlock::Range(range) => Ok(range),
-            _ => Err(Diagnostics::new_error_spanned(
-                "Expected a range expression",
-                input.span(),
-            )),
+        if let Expression::WithoutBlock(expr) = ExpressionWithoutBlock::parse_range(input, true)?
+            && let ExpressionWithoutBlock::Range(range) = *expr
+        {
+            return Ok(range);
         }
+        Err(Diagnostics::new_error_spanned(
+            "Expected a range expression",
+            input.span(),
+        ))
     }
 }
 
@@ -1620,10 +1768,13 @@ macro_rules! delegate_to_precedence_chain {
     ($ty:ty, $variant:ident, $msg:literal) => {
         impl Parse for $ty {
             fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-                match ExpressionWithoutBlock::parse_assignment(input, true)? {
-                    ExpressionWithoutBlock::$variant(value) => Ok(value),
-                    _ => Err(Diagnostics::new_error_spanned($msg, input.span())),
+                if let Expression::WithoutBlock(expr) =
+                    ExpressionWithoutBlock::parse_assignment(input, true)?
+                    && let ExpressionWithoutBlock::$variant(value) = *expr
+                {
+                    return Ok(value);
                 }
+                Err(Diagnostics::new_error_spanned($msg, input.span()))
             }
         }
     };
@@ -1648,6 +1799,15 @@ delegate_to_precedence_chain!(
     MethodCall,
     "Expected a method call expression"
 );
+delegate_to_precedence_chain!(AwaitExpression, Await, "Expected an `.await` expression");
+delegate_to_precedence_chain!(IndexExpression, Index, "Expected an index expression");
+delegate_to_precedence_chain!(
+    TupleIndexExpression,
+    TupleIndex,
+    "Expected a tuple index expression"
+);
+delegate_to_precedence_chain!(FieldExpression, Field, "Expected a field expression");
+delegate_to_precedence_chain!(CallExpression, Call, "Expected a call expression");
 
 impl Parse for ClosureExpression {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
@@ -1693,10 +1853,28 @@ impl Parse for ClosureParam {
 
 impl Parse for StructExprField {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        if let Ok((ident, colon, expr)) = input.try_parse::<(Ident, Colon, Expression)>() {
-            return Ok(Self::Named(ident, colon, expr));
+        Ok(Self {
+            attrs: parse_outer_attributes(input),
+            kind: input.parse()?,
+        })
+    }
+}
+
+impl Parse for StructExprFieldKind {
+    fn parse(input: &mut ParseBuffer) -> Result<Self> {
+        if let Ok((member, colon, expr)) = input.try_parse() {
+            return Ok(Self::Named(member, colon, expr));
         }
         Ok(Self::Shorthand(input.parse()?))
+    }
+}
+
+impl Parse for StructExprMember {
+    fn parse(input: &mut ParseBuffer) -> Result<Self> {
+        if let Ok(ident) = input.try_parse() {
+            return Ok(Self::Named(ident));
+        }
+        Ok(Self::Unnamed(input.parse()?))
     }
 }
 
@@ -1760,13 +1938,27 @@ impl ToTokens for ClosureParam {
 }
 impl ToTokens for StructExprField {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attrs.to_tokens(tokens);
+        self.kind.to_tokens(tokens);
+    }
+}
+impl ToTokens for StructExprFieldKind {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         match self {
-            Self::Named(ident, colon, expr) => {
-                ident.to_tokens(tokens);
+            Self::Named(member, colon, expr) => {
+                member.to_tokens(tokens);
                 colon.to_tokens(tokens);
                 expr.to_tokens(tokens);
             }
             Self::Shorthand(ident) => ident.to_tokens(tokens),
+        }
+    }
+}
+impl ToTokens for StructExprMember {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        match self {
+            Self::Named(ident) => ident.to_tokens(tokens),
+            Self::Unnamed(index) => index.to_tokens(tokens),
         }
     }
 }
@@ -1801,7 +1993,14 @@ impl ToTokens for BorrowAmp {
 impl ToTokens for BorrowExpression {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         self.amp.to_tokens(tokens);
+        self.raw.to_tokens(tokens);
         self.mutability.to_tokens(tokens);
+        self.expr.to_tokens(tokens);
+    }
+}
+impl ToTokens for AttributedExpression {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attrs.to_tokens(tokens);
         self.expr.to_tokens(tokens);
     }
 }
@@ -1962,8 +2161,13 @@ impl Parse for TupleExpression {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         let exprs: Parenthesized<Punctuated<Expression, _>> = input.parse()?;
 
-        if exprs.is_empty() || (exprs.len() == 1 && exprs.trailing().is_none()) {
-            return Err(Diagnostics::new_error_spanned("", exprs.span()));
+        // a single element without a trailing comma is a grouped
+        // expression, not a 1-tuple; `()` is the (empty) unit tuple
+        if exprs.len() == 1 && exprs.trailing().is_some() {
+            return Err(Diagnostics::new_error_spanned(
+                "Expected a tuple expression",
+                exprs.span(),
+            ));
         }
         Ok(Self { exprs })
     }
@@ -2149,14 +2353,11 @@ fn parse_condition(input: &mut ParseBuffer) -> Result<Condition> {
         let pat = input.parse()?;
         let eq = input.parse()?;
         let scrutinee = ExpressionWithoutBlock::parse_compare(input, false)?;
-        return Ok(Condition::Let(let_token, pat, eq, Box::new(wrap(scrutinee))));
+        return Ok(Condition::Let(let_token, pat, eq, Box::new(scrutinee)));
     }
-    if let Ok(block) = input.try_parse() {
-        return Ok(Condition::Expr(Expression::WithBlock(Box::new(block))));
-    }
-    Ok(Condition::Expr(wrap(ExpressionWithoutBlock::parse_compare(
+    Ok(Condition::Expr(ExpressionWithoutBlock::parse_compare(
         input, false,
-    )?)))
+    )?))
 }
 
 /// Parse a condition containing at least one `let`, failing otherwise so
@@ -2263,6 +2464,7 @@ impl ToTokens for ForExpression {
 
 impl Parse for MatchArm {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
+        let attrs = parse_outer_attributes(input);
         let pat = input.parse()?;
         let guard = if let Ok(if_token) = input.try_parse::<If>() {
             Some((if_token, input.parse()?))
@@ -2270,9 +2472,10 @@ impl Parse for MatchArm {
             None
         };
         let fat_arrow = input.parse()?;
-        let body = input.parse()?;
+        let body = parse_statement_like(input)?;
         let comma = input.try_parse().ok();
         Ok(Self {
+            attrs,
             pat,
             guard,
             fat_arrow,
@@ -2284,6 +2487,7 @@ impl Parse for MatchArm {
 
 impl ToTokens for MatchArm {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attrs.to_tokens(tokens);
         self.pat.to_tokens(tokens);
         self.guard.to_tokens(tokens);
         self.fat_arrow.to_tokens(tokens);
@@ -2347,6 +2551,7 @@ impl ToTokens for ConstBlockExpression {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::statements::Statement;
     use crate::ast::tests::check;
 
     fn parse_check(s: &str) -> ExpressionWithoutBlock {
@@ -2357,12 +2562,16 @@ mod tests {
     fn mul_binds_tighter_than_add() {
         let e = parse_check("a + b * c");
         match e {
-            ExpressionWithoutBlock::Binary(BinaryExpression { op: BinOp::Add(_), rhs, .. }) => {
-                match *rhs_inner(&rhs) {
-                    ExpressionWithoutBlock::Binary(BinaryExpression { op: BinOp::Mul(_), .. }) => {}
-                    _ => panic!("expected mul on rhs of add"),
-                }
-            }
+            ExpressionWithoutBlock::Binary(BinaryExpression {
+                op: BinOp::Add(_),
+                rhs,
+                ..
+            }) => match *rhs_inner(&rhs) {
+                ExpressionWithoutBlock::Binary(BinaryExpression {
+                    op: BinOp::Mul(_), ..
+                }) => {}
+                _ => panic!("expected mul on rhs of add"),
+            },
             other => panic!("expected top-level add, got {other:?}"),
         }
     }
@@ -2417,18 +2626,27 @@ mod tests {
         let e = parse_check("a & b");
         assert!(matches!(
             e,
-            ExpressionWithoutBlock::Binary(BinaryExpression { op: BinOp::BitAnd(_), .. })
+            ExpressionWithoutBlock::Binary(BinaryExpression {
+                op: BinOp::BitAnd(_),
+                ..
+            })
         ));
         let e2 = parse_check("a && b");
         assert!(matches!(
             e2,
-            ExpressionWithoutBlock::Binary(BinaryExpression { op: BinOp::And(_), .. })
+            ExpressionWithoutBlock::Binary(BinaryExpression {
+                op: BinOp::And(_),
+                ..
+            })
         ));
         // space-separated: must NOT be parsed as `&&`
         let e3 = parse_check("a & &b");
         assert!(matches!(
             e3,
-            ExpressionWithoutBlock::Binary(BinaryExpression { op: BinOp::BitAnd(_), .. })
+            ExpressionWithoutBlock::Binary(BinaryExpression {
+                op: BinOp::BitAnd(_),
+                ..
+            })
         ));
     }
 
@@ -2448,8 +2666,7 @@ mod tests {
     fn every_binary_operator_round_trips() {
         for src in [
             "a + b", "a - b", "a * b", "a / b", "a % b", "a & b", "a | b", "a ^ b", "a << b",
-            "a >> b", "a == b", "a != b", "a < b", "a > b", "a <= b", "a >= b", "a && b",
-            "a || b",
+            "a >> b", "a == b", "a != b", "a < b", "a > b", "a <= b", "a >= b", "a && b", "a || b",
         ] {
             parse_check(src);
         }
@@ -2494,7 +2711,10 @@ mod tests {
         let e = parse_check("..=5");
         assert!(matches!(
             e,
-            ExpressionWithoutBlock::Range(RangeExpression { dot_eq: Some(_), .. })
+            ExpressionWithoutBlock::Range(RangeExpression {
+                dot_eq: Some(_),
+                ..
+            })
         ));
     }
 
@@ -2552,7 +2772,10 @@ mod tests {
         let e = parse_check("a | b");
         assert!(matches!(
             e,
-            ExpressionWithoutBlock::Binary(BinaryExpression { op: BinOp::BitOr(_), .. })
+            ExpressionWithoutBlock::Binary(BinaryExpression {
+                op: BinOp::BitOr(_),
+                ..
+            })
         ));
     }
 
@@ -2581,7 +2804,9 @@ mod tests {
             }) => {
                 assert!(matches!(cond, Expression::WithoutBlock(_)));
                 match cond {
-                    Expression::WithoutBlock(b) => assert!(matches!(*b, ExpressionWithoutBlock::Path(_))),
+                    Expression::WithoutBlock(b) => {
+                        assert!(matches!(*b, ExpressionWithoutBlock::Path(_)));
+                    }
                     Expression::WithBlock(_) => panic!("expected WithoutBlock"),
                 }
             }
@@ -2617,7 +2842,11 @@ mod tests {
             })
         ));
         check::<IfExpression>("if a && let Some(x) = b { }".parse().unwrap());
-        check::<WhileExpression>("while let Some(x) = it.next() && x != 0 { }".parse().unwrap());
+        check::<WhileExpression>(
+            "while let Some(x) = it.next() && x != 0 { }"
+                .parse()
+                .unwrap(),
+        );
         // No `let`: an ordinary expression, `||` included.
         let e = parse_check_block("if a && b || c { }");
         assert!(matches!(
@@ -2644,7 +2873,11 @@ mod tests {
 
     #[test]
     fn match_expression_with_guard_and_or_pattern() {
-        check::<MatchExpression>("match x { 1 | 2 => a, n if n > 2 => b, _ => c }".parse().unwrap());
+        check::<MatchExpression>(
+            "match x { 1 | 2 => a, n if n > 2 => b, _ => c }"
+                .parse()
+                .unwrap(),
+        );
     }
 
     #[test]
@@ -2676,7 +2909,218 @@ mod tests {
             .unwrap(),
         );
     }
+
+    fn expr_check(s: &str) -> Expression {
+        check::<Expression>(s.parse().unwrap())
+    }
+
+    fn without_block(e: &Expression) -> &ExpressionWithoutBlock {
+        rhs_inner(e)
+    }
+
+    #[test]
+    fn block_like_expressions_as_operands() {
+        for src in [
+            "if a { 1 } else { 2 } + 3",
+            "a + if c { 1 } else { 2 }",
+            "x = match y { _ => 1 }",
+            "x = loop { break 1 }",
+            "! unsafe { f () }",
+            "& { x }",
+            "- { x }",
+            "unsafe { f () }.bar ()",
+            "match x { _ => v }.len ()",
+            "{ x }.len ()",
+            "async { 1 }.await",
+            "const { 1 } + 1",
+            "foo (match x { _ => 1 })",
+        ] {
+            assert!(
+                matches!(expr_check(src), Expression::WithoutBlock(_)),
+                "{src}"
+            );
+        }
+        assert!(matches!(
+            expr_check("if a { 1 } else { 2 }"),
+            Expression::WithBlock(_)
+        ));
+        let e = expr_check("if a { 1 } else { 2 } + 3");
+        assert!(matches!(
+            without_block(&e),
+            ExpressionWithoutBlock::Binary(BinaryExpression {
+                lhs: Expression::WithBlock(_),
+                ..
+            })
+        ));
+        // a lone block-like expression is not an `ExpressionWithoutBlock`
+        assert!(
+            ParseBuffer::new("{ x }".parse().unwrap())
+                .parse::<ExpressionWithoutBlock>()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn no_struct_context_stops_before_body() {
+        check::<ExpressionWithBlock>("for i in 0 .. { }".parse().unwrap());
+        check::<ExpressionWithBlock>("for i in .. { }".parse().unwrap());
+        check::<ExpressionWithBlock>("if x == y { }".parse().unwrap());
+        check::<ExpressionWithBlock>("while a < b { }".parse().unwrap());
+        check::<ExpressionWithBlock>("match x { }".parse().unwrap());
+    }
+
+    fn statements(s: &str) -> Vec<Statement> {
+        crate::ast::tests::parse_exact::<Vec<Statement>>(s.parse().unwrap())
+    }
+
+    #[test]
+    fn block_like_statement_ends_at_its_block() {
+        let stmts = statements("{ 1 } - 1");
+        assert_eq!(stmts.len(), 2);
+        assert!(matches!(stmts[0], Statement::ExpressionWithBlock(_, None)));
+        let stmts = statements("if a { } else { } * x");
+        assert_eq!(stmts.len(), 2);
+        let stmts = statements("match x { }.len () ;");
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(
+            stmts[0],
+            Statement::ExpressionWithoutBlock(ExpressionWithoutBlock::MethodCall(_), Some(_))
+        ));
+        let stmts = statements("unsafe { f () } ? ;");
+        assert!(matches!(
+            stmts[..],
+            [Statement::ExpressionWithoutBlock(
+                ExpressionWithoutBlock::Try(_),
+                Some(_)
+            )]
+        ));
+    }
+
+    #[test]
+    fn match_arm_block_bodies() {
+        let e = parse_check_block(
+            "match x { A => { } B => { } - 1 => 2 , _ => if a { 1 } else { 2 } }",
+        );
+        let ExpressionWithBlock::Match(m) = e else {
+            panic!("expected match");
+        };
+        assert_eq!(m.arms.len(), 4);
+        parse_check_block("match x { _ => match y { } . len () , }");
+        parse_check_block("match x { # [cfg (a)] A => 1 , _ => 2 }");
+    }
+
+    #[test]
+    fn tuples_unit_and_single() {
+        assert!(matches!(
+            parse_check("()"),
+            ExpressionWithoutBlock::Tuple(_)
+        ));
+        assert!(matches!(
+            parse_check("(1 ,)"),
+            ExpressionWithoutBlock::Tuple(_)
+        ));
+        assert!(matches!(
+            parse_check("(1)"),
+            ExpressionWithoutBlock::Grouped(_)
+        ));
+    }
+
+    #[test]
+    fn bare_return() {
+        assert!(matches!(
+            parse_check("return"),
+            ExpressionWithoutBlock::Return(ReturnExpression { expr: None, .. })
+        ));
+        parse_check("a || return b");
+        parse_check("x = | y | y + 1");
+    }
+
+    #[test]
+    fn expression_paths_need_turbofish() {
+        let ExpressionWithoutBlock::Tuple(tuple) = parse_check("(a < b , c > d)") else {
+            panic!("expected tuple");
+        };
+        assert_eq!(tuple.exprs.len(), 2);
+        assert!(matches!(
+            parse_check("f (a < b , c > d)"),
+            ExpressionWithoutBlock::Call(_)
+        ));
+        parse_check("Vec :: < u8 > :: new ()");
+        parse_check("Foo :: < T > { a : 1 }");
+        parse_check("f :: < { N + 1 } > ()");
+        parse_check("f :: < 3 , - 1 , 'a , T > ()");
+    }
+
+    #[test]
+    fn qualified_path_expressions() {
+        assert!(matches!(
+            parse_check("< T as Trait > :: f"),
+            ExpressionWithoutBlock::QualifiedPath(_)
+        ));
+        parse_check("< T > :: f");
+        parse_check("< Vec < u8 > as Default > :: default ()");
+        parse_check("< T as Trait > :: f :: < U > (x) < y");
+    }
+
+    #[test]
+    fn raw_borrows() {
+        let ExpressionWithoutBlock::Unary(UnaryExpression::Borrow(b)) =
+            parse_check("& raw const x")
+        else {
+            panic!("expected borrow");
+        };
+        assert!(matches!(b.raw, Some((_, Some(_)))));
+        let ExpressionWithoutBlock::Unary(UnaryExpression::Borrow(b)) = parse_check("& raw mut x")
+        else {
+            panic!("expected borrow");
+        };
+        assert!(matches!(b.raw, Some((_, None))) && b.mutability.is_some());
+        // `raw` on its own is just a variable
+        let ExpressionWithoutBlock::Unary(UnaryExpression::Borrow(b)) = parse_check("& raw") else {
+            panic!("expected borrow");
+        };
+        assert!(b.raw.is_none());
+        parse_check("& raw . len ()");
+    }
+
+    #[test]
+    fn nested_tuple_index() {
+        let mut input = ParseBuffer::new("x.0.1".parse().unwrap());
+        let e = input.parse::<ExpressionWithoutBlock>().unwrap();
+        assert!(input.is_empty());
+        let ExpressionWithoutBlock::TupleIndex(outer) = e else {
+            panic!("expected tuple index");
+        };
+        assert_eq!(outer.index.content(), "1");
+        let ExpressionWithoutBlock::TupleIndex(inner) = without_block(&outer.expr) else {
+            panic!("expected nested tuple index");
+        };
+        assert_eq!(inner.index.content(), "0");
+        assert_eq!(e_to_string(&outer), "x . 0 . 1");
+    }
+
+    fn e_to_string(e: &impl ToTokens) -> String {
+        let mut out = crate::proc_macro::TokenStream::new();
+        e.to_tokens(&mut out);
+        out.to_string()
+    }
+
+    #[test]
+    fn attributes_on_expressions() {
+        assert!(matches!(
+            parse_check("# [attr] x"),
+            ExpressionWithoutBlock::Attributed(_)
+        ));
+        parse_check("[# [a] 1 , 2]");
+        parse_check("f (# [a] x)");
+        parse_check("(# [a] x ,)");
+        parse_check("Foo { # [cfg (x)] a : 1 , # [cfg (y)] b }");
+        let stmts = statements("# [cfg (x)] { } # [allow (y)] f () ;");
+        assert_eq!(stmts.len(), 2);
+    }
+
+    #[test]
+    fn numeric_struct_fields() {
+        parse_check("Foo { 0 : a , 1 : b }");
+    }
 }
-
-
-

@@ -16,8 +16,9 @@
 //!
 //! Coverage is close to the full stable Rust grammar: items, generics and
 //! `where` clauses, types, every literal kind, expressions (including
-//! closures, `async`/`const`/`unsafe` blocks and let-chains), statements and
-//! most patterns. The known gaps are:
+//! closures, `async`/`const`/`unsafe` blocks, let-chains, qualified paths,
+//! raw borrows and expression attributes), statements and most patterns.
+//! The known gaps are:
 //!
 //! - [`pattern::Pattern`] does not cover slice patterns (`[a, .., b]`),
 //!   range patterns (`1..=5`, `'a'..='z'`) or `box` patterns.

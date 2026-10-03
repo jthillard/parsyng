@@ -5,11 +5,13 @@ use crate::ToTokens;
 use crate::{
     ast::{
         delimiter::Braced,
-        expression::{Expression, ExpressionWithBlock, ExpressionWithoutBlock},
+        expression::{
+            Expression, ExpressionWithBlock, ExpressionWithoutBlock, continues_with_postfix,
+        },
         item::Item,
         pattern::Pattern,
-        r#type::Type,
         tokens::{Colon, Else, Eq, Let, Semicolon},
+        r#type::Type,
     },
     error::Diagnostics,
     parse::Parse,
@@ -74,7 +76,20 @@ impl Parse for Statement {
             Ok(Self::Item(item))
         } else if let Ok(let_statement) = input.try_parse() {
             Ok(Self::Let(let_statement))
-        } else if let Ok((expression, semicolon)) = input.try_parse() {
+        } else if let Ok((expression, semicolon)) = input.try_advance(|input| {
+            // a block-like expression ends the statement at its `}` (so
+            // `{ a } - 1` is two statements), unless a postfix `.`/`?`
+            // follows: `match x { .. }.len()` falls through to the
+            // without-block branch below.
+            let expression: ExpressionWithBlock = input.parse()?;
+            if continues_with_postfix(input) {
+                return Err(Diagnostics::new_error_spanned(
+                    "Expected the end of a statement",
+                    input.span(),
+                ));
+            }
+            Ok((expression, input.try_parse().ok()))
+        }) {
             Ok(Self::ExpressionWithBlock(expression, semicolon))
         } else if let Ok((expression, semicolon)) = input.try_parse() {
             Ok(Self::ExpressionWithoutBlock(expression, semicolon))

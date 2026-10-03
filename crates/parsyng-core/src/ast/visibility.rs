@@ -80,7 +80,9 @@ impl Parse for Visibility {
         };
         Ok(match visibility {
             Restricted::Crate(token) => Self::Crate(pub_token, Parenthesized::new(group, token)),
-            Restricted::SelfVis(token) => Self::SelfVis(pub_token, Parenthesized::new(group, token)),
+            Restricted::SelfVis(token) => {
+                Self::SelfVis(pub_token, Parenthesized::new(group, token))
+            }
             Restricted::Super(token) => Self::Super(pub_token, Parenthesized::new(group, token)),
             Restricted::PubIn(token, path) => {
                 Self::PubIn(pub_token, Parenthesized::new(group, (token, path)))

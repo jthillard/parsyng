@@ -14,11 +14,11 @@ use crate::{
             TupleIndexExpression, UnderscoreExpression, UnsafeBlockExpression,
         },
         item::{
-            GenericParam, GenericParams, Lifetime, LifetimeBounds, LifetimeParam,
+            DeriveInput, GenericParam, GenericParams, Lifetime, LifetimeBounds, LifetimeParam,
             LifetimeWhereClauseItem, TraitBound, TypeBoundWhereClauseItem, TypeParam,
             TypeParamBound, TypeParamBounds, WhereClause, WhereClauseItem, associated::*,
-            DeriveInput, constant::ConstantItem, enum_item::EnumVariantFields,
-            implementation::Implementation, r#struct::*,
+            constant::ConstantItem, enum_item::EnumVariantFields, implementation::Implementation,
+            r#struct::*,
         },
         literal::{
             Literal, LiteralByte, LiteralByteStr, LiteralCStr, LiteralChar, LiteralFloat,
@@ -90,10 +90,16 @@ fn literal_nodes() {
 #[test]
 fn numeric_literal_kinds() {
     for int in ["1usize", "0x1f", "0b1010u8", "0o17", "1_000i64"] {
-        assert!(matches!(check::<Literal>(ts(int)), Literal::UInt(_)), "{int}");
+        assert!(
+            matches!(check::<Literal>(ts(int)), Literal::UInt(_)),
+            "{int}"
+        );
     }
     for float in ["1e10", "1.5E-3", "2f32", "1_0.0_1f64"] {
-        assert!(matches!(check::<Literal>(ts(float)), Literal::Float(_)), "{float}");
+        assert!(
+            matches!(check::<Literal>(ts(float)), Literal::Float(_)),
+            "{float}"
+        );
     }
 }
 
@@ -127,7 +133,10 @@ fn byte_and_c_string_literals() {
     assert_eq!(bytes.value(), b"a\xFF\0");
     let raw_bytes = check::<LiteralByteStr>(ts(r##"br#"\x"#"##));
     assert_eq!(raw_bytes.value(), br"\x");
-    assert!(matches!(check::<Literal>(ts(r#"b"s""#)), Literal::ByteStr(_)));
+    assert!(matches!(
+        check::<Literal>(ts(r#"b"s""#)),
+        Literal::ByteStr(_)
+    ));
 
     let c_str = check::<LiteralCStr>(ts(r#"c"a\xFF\u{e9}""#));
     assert_eq!(c_str.value().to_bytes(), b"a\xFF\xC3\xA9");
@@ -140,7 +149,10 @@ fn byte_and_c_string_literals() {
 fn char_and_byte_literals() {
     assert_eq!(check::<LiteralChar>(ts("'a'")).value(), 'a');
     assert_eq!(check::<LiteralChar>(ts(r"'\''")).value(), '\'');
-    assert_eq!(check::<LiteralChar>(ts(r"'\u{1F980}'")).value(), '\u{1F980}');
+    assert_eq!(
+        check::<LiteralChar>(ts(r"'\u{1F980}'")).value(),
+        '\u{1F980}'
+    );
     assert_eq!(parse_exact::<char>(ts("'z'")), 'z');
     assert!(matches!(check::<Literal>(ts("'a'")), Literal::Char(_)));
 
@@ -194,7 +206,10 @@ fn visibility_nodes() {
 
     // A parenthesized group that is not a restriction is left in the input.
     let mut input = ParseBuffer::new(quote! { pub (u8, u8) });
-    assert!(matches!(input.parse::<Visibility>(), Ok(Visibility::Public(_))));
+    assert!(matches!(
+        input.parse::<Visibility>(),
+        Ok(Visibility::Public(_))
+    ));
     assert!(!input.is_empty());
 }
 
@@ -215,7 +230,11 @@ fn derive_input_nodes() {
         panic!("expected a tuple struct")
     };
     assert_eq!(fields.iter().count(), 2);
-    assert!(fields.iter().all(|field| matches!(field.visibility(), Visibility::Public(_))));
+    assert!(
+        fields
+            .iter()
+            .all(|field| matches!(field.visibility(), Visibility::Public(_)))
+    );
 
     let mut enumeration = check::<DeriveInput>(quote! {
         enum Shape<'a, T> where T: Copy {
@@ -239,7 +258,10 @@ fn derive_input_nodes() {
     let variants: Vec<_> = item.variants().iter().collect();
     assert_eq!(variants.len(), 3);
     assert!(matches!(variants[0].fields(), EnumVariantFields::Unit));
-    assert!(matches!(variants[1].fields(), EnumVariantFields::Unnamed(_)));
+    assert!(matches!(
+        variants[1].fields(),
+        EnumVariantFields::Unnamed(_)
+    ));
     assert!(variants[1].discriminant().is_some());
     let EnumVariantFields::Named(fields) = variants[2].fields() else {
         panic!("expected named fields")
@@ -304,8 +326,7 @@ fn item_nodes() {
     let field = check::<StructField>(quote! { pub x: u8 });
     assert_eq!(field.ident().to_string(), "x");
 
-    let struct_struct =
-        check::<Struct>(quote! { struct Point<T> where T: Copy { pub x: T, } });
+    let struct_struct = check::<Struct>(quote! { struct Point<T> where T: Copy { pub x: T, } });
     assert_eq!(struct_struct.ident().to_string(), "Point");
     assert!(struct_struct.generic_parameters().is_some());
 
@@ -335,7 +356,10 @@ fn expression_nodes() {
     assert!(matches!(expr, Expression::WithoutBlock(_)));
 
     let expr_without_block = check::<ExpressionWithoutBlock>(quote! { foo });
-    assert!(matches!(expr_without_block, ExpressionWithoutBlock::Path(_)));
+    assert!(matches!(
+        expr_without_block,
+        ExpressionWithoutBlock::Path(_)
+    ));
 
     let expr_with_block = check::<ExpressionWithBlock>(quote! { { ; } });
     assert!(matches!(expr_with_block, ExpressionWithBlock::Block(_)));
@@ -393,4 +417,3 @@ fn statement_and_crate_nodes() {
         impl A { type Assoc; const VALUE: u8; }
     });
 }
-

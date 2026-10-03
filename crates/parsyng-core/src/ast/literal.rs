@@ -104,6 +104,18 @@ impl Literal {
 }
 
 impl LiteralNumber {
+    /// A decimal literal with no prefix or suffix, made of `digits` (which
+    /// must all be ASCII digits) — used to split the float token `0.1` of
+    /// `x.0.1` into two tuple indices.
+    pub(crate) fn from_digits(digits: &str, span: Span) -> Self {
+        Self {
+            content: digits.to_owned(),
+            prefix: 0..0,
+            suffix: digits.len()..digits.len(),
+            span,
+        }
+    }
+
     /// The digits, excluding any radix prefix or type suffix.
     #[must_use]
     pub fn content(&self) -> &str {
@@ -526,7 +538,8 @@ fn unicode_escape(chars: &mut impl Iterator<Item = char>) -> core::result::Resul
             _ => return Err(ERROR.to_owned()),
         }
     }
-    char::from_u32(value).ok_or_else(|| format!("Invalid unicode character escape `\\u{{{value:X}}}`"))
+    char::from_u32(value)
+        .ok_or_else(|| format!("Invalid unicode character escape `\\u{{{value:X}}}`"))
 }
 
 /// Decode the contents of a non-raw quoted literal.
@@ -570,10 +583,18 @@ fn unescape(
             }
             Some('u') if mode != EscapeMode::Bytes => Unit::Char(unicode_escape(&mut chars)?),
             Some('\n') if allow_continuation => {
-                while chars.next_if(|c| matches!(c, ' ' | '\t' | '\n' | '\r')).is_some() {}
+                while chars
+                    .next_if(|c| matches!(c, ' ' | '\t' | '\n' | '\r'))
+                    .is_some()
+                {}
                 continue;
             }
-            Some(other) => return Err(format!("Unknown character escape `\\{}`", other.escape_default())),
+            Some(other) => {
+                return Err(format!(
+                    "Unknown character escape `\\{}`",
+                    other.escape_default()
+                ));
+            }
             None => return Err("Unterminated escape sequence".to_owned()),
         };
         units.push(unit);
@@ -812,9 +833,15 @@ impl Peek for char {}
 impl Parse for bool {
     #[allow(clippy::cmp_owned)]
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        if input.ident_and(|ident| ident.to_string() == "true").is_some() {
+        if input
+            .ident_and(|ident| ident.to_string() == "true")
+            .is_some()
+        {
             Ok(true)
-        } else if input.ident_and(|ident| ident.to_string() == "false").is_some() {
+        } else if input
+            .ident_and(|ident| ident.to_string() == "false")
+            .is_some()
+        {
             Ok(false)
         } else {
             Err(Diagnostics::new_error_spanned(
@@ -841,7 +868,10 @@ mod tests {
         assert!(bytes(r"\x80", EscapeMode::Str).is_err());
         assert_eq!(bytes(r"\x80", EscapeMode::Bytes).unwrap(), b"\x80");
         assert!(bytes(r"\u{e9}", EscapeMode::Bytes).is_err());
-        assert_eq!(bytes(r"\u{e9}", EscapeMode::CStr).unwrap(), "\u{e9}".as_bytes());
+        assert_eq!(
+            bytes(r"\u{e9}", EscapeMode::CStr).unwrap(),
+            "\u{e9}".as_bytes()
+        );
         assert!(bytes("\u{e9}", EscapeMode::Bytes).is_err());
         assert!(decode(true, "\u{e9}", EscapeMode::Bytes, true).is_err());
         assert!(bytes(r"\q", EscapeMode::Str).is_err());
@@ -852,7 +882,9 @@ mod tests {
         assert!(bytes("\\", EscapeMode::Str).is_err());
         assert!(unescape("\\\n", EscapeMode::Str, false).is_err());
         assert!(matches!(
-            unescape(r"\n", EscapeMode::Bytes, false).unwrap().as_slice(),
+            unescape(r"\n", EscapeMode::Bytes, false)
+                .unwrap()
+                .as_slice(),
             [Unit::Byte(b'\n')]
         ));
     }

@@ -241,7 +241,10 @@ pub fn parse_all<T: Parse>(tokens: TokenStream) -> Result<T> {
     if input.is_empty() {
         Ok(value)
     } else {
-        Err(Diagnostics::new_error_spanned("Unexpected token", input.span()))
+        Err(Diagnostics::new_error_spanned(
+            "Unexpected token",
+            input.span(),
+        ))
     }
 }
 

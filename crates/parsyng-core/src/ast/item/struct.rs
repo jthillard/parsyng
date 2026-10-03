@@ -72,7 +72,6 @@ impl Struct {
     }
 }
 
-
 impl Parse for Struct {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         let struct_token = input.parse()?;
