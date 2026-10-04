@@ -238,10 +238,22 @@ where
 /// Real-world source files (from tokio) used for whole-file parsing, shared
 /// with `parsyng-core`'s round-trip tests.
 pub const FILES: &[(&str, &str)] = &[
-    ("broadcast", include_str!("../../../crates/parsyng-core/tests/test_files/broadcast.rs")),
-    ("delay_queue", include_str!("../../../crates/parsyng-core/tests/test_files/delay_queue.rs")),
-    ("entry", include_str!("../../../crates/parsyng-core/tests/test_files/entry.rs")),
-    ("local", include_str!("../../../crates/parsyng-core/tests/test_files/local.rs")),
+    (
+        "broadcast",
+        include_str!("../../../crates/parsyng-core/tests/test_files/broadcast.rs"),
+    ),
+    (
+        "delay_queue",
+        include_str!("../../../crates/parsyng-core/tests/test_files/delay_queue.rs"),
+    ),
+    (
+        "entry",
+        include_str!("../../../crates/parsyng-core/tests/test_files/entry.rs"),
+    ),
+    (
+        "local",
+        include_str!("../../../crates/parsyng-core/tests/test_files/local.rs"),
+    ),
 ];
 
 /// The top-level items of `src` that moxy parses *faithfully* (re-emitting
@@ -267,7 +279,8 @@ pub fn common_subset(src: &str) -> String {
             moxy::parse!(item as moxy::ast::Item).is_ok_and(|parsed| {
                 // moxy loses joint spacing in macro bodies; ignore whitespace.
                 let strip = |s: &str| s.split_whitespace().collect::<String>();
-                strip(&moxy::token::ToTokenStream::to_token_stream(&parsed).to_string()) == strip(item)
+                strip(&moxy::token::ToTokenStream::to_token_stream(&parsed).to_string())
+                    == strip(item)
             })
         })
         .collect::<Vec<_>>()

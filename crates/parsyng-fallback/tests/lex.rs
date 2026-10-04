@@ -4,7 +4,8 @@
 use parsyng_fallback::{Delimiter, Ident, Literal, Spacing, Span, TokenStream, TokenTree};
 
 fn lex(src: &str) -> TokenStream {
-    src.parse().unwrap_or_else(|e| panic!("failed to lex {src:?}: {e}"))
+    src.parse()
+        .unwrap_or_else(|e| panic!("failed to lex {src:?}: {e}"))
 }
 
 /// Same printed tokens as `proc_macro2`, and printing then re-lexing is
@@ -75,14 +76,32 @@ fn spacing_and_lifetimes() {
         .collect();
     assert_eq!(
         spacings,
-        [('+', Spacing::Joint), ('=', Spacing::Alone), ('&', Spacing::Joint), ('\'', Spacing::Joint)]
+        [
+            ('+', Spacing::Joint),
+            ('=', Spacing::Alone),
+            ('&', Spacing::Joint),
+            ('\'', Spacing::Joint)
+        ]
     );
 }
 
 #[test]
 fn errors() {
-    for src in ["(", ")", "(]", "\"unterminated", "/* unterminated", "'", "\u{1F600}", "r#\"x\"", "'ab'"] {
-        assert!(src.parse::<TokenStream>().is_err(), "{src:?} should not lex");
+    for src in [
+        "(",
+        ")",
+        "(]",
+        "\"unterminated",
+        "/* unterminated",
+        "'",
+        "\u{1F600}",
+        "r#\"x\"",
+        "'ab'",
+    ] {
+        assert!(
+            src.parse::<TokenStream>().is_err(),
+            "{src:?} should not lex"
+        );
     }
     let error = "a (b ]".parse::<TokenStream>().unwrap_err();
     assert_eq!(error.span().byte_range(), 5..6);
@@ -110,7 +129,10 @@ fn literals() {
     assert_eq!("-1.5".parse::<Literal>().unwrap().to_string(), "-1.5");
     assert_eq!("\"s\"".parse::<Literal>().unwrap().to_string(), "\"s\"");
     for invalid in ["", "a", "1 2", "-", "- a", "(1)"] {
-        assert!(invalid.parse::<Literal>().is_err(), "{invalid:?} is not a literal");
+        assert!(
+            invalid.parse::<Literal>().is_err(),
+            "{invalid:?} is not a literal"
+        );
     }
 }
 
@@ -124,9 +146,14 @@ fn streams() {
     assert_eq!(copy.to_string(), "a");
     assert_eq!(stream.to_string(), "a + b");
     let group = parsyng_fallback::Group::new(Delimiter::Brace, stream.clone());
-    assert_eq!(TokenStream::from(TokenTree::from(group)).to_string(), "{ a + b }");
+    assert_eq!(
+        TokenStream::from(TokenTree::from(group)).to_string(),
+        "{ a + b }"
+    );
     assert_eq!(Ident::new("r#fn", Span::call_site()).to_string(), "r#fn");
-    let collected: TokenStream = [stream.clone(), TokenStream::new(), stream].into_iter().collect();
+    let collected: TokenStream = [stream.clone(), TokenStream::new(), stream]
+        .into_iter()
+        .collect();
     assert_eq!(collected.to_string(), "a + b a + b");
 }
 

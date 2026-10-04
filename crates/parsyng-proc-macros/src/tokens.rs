@@ -422,7 +422,10 @@ impl DeriveInput {
                 let ident = variant.ident("a variant name")?;
                 let fields = Fields::parse(&mut variant)?;
                 // Skip a `= discriminant`.
-                while variant.next().is_some_and(|tree| !is_punct(Some(&tree), ',')) {}
+                while variant
+                    .next()
+                    .is_some_and(|tree| !is_punct(Some(&tree), ','))
+                {}
                 variants.push((ident, fields));
             }
             Data::Enum(variants)

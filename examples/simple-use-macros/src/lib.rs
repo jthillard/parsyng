@@ -56,7 +56,7 @@ pub fn simple_macro(n: Crate) -> Result<TokenStream> {
 
 #[parsyng::proc_macro]
 pub fn add_one(n: u8) -> u8 {
-   n + 1
+    n + 1
 }
 
 #[parsyng::proc_macro_attribute(debug)]

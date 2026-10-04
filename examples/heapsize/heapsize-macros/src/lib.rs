@@ -7,8 +7,8 @@ use parsyng::{
         r#struct::StructFields,
     },
     parse_quote,
-    proc_macro::{Ident, Span},
     proc_macro::TokenStream,
+    proc_macro::{Ident, Span},
     quote, quote_spanned,
 };
 

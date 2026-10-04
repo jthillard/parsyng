@@ -30,12 +30,25 @@ use crate::{
 #[derive(Clone, Copy)]
 enum Kind {
     /// The text is `Buffer::text[start..end]`.
-    Ident { start: u32, end: u32, keyword: u8 },
-    Punct { ch: char, joint: bool },
+    Ident {
+        start: u32,
+        end: u32,
+        keyword: u8,
+    },
+    Punct {
+        ch: char,
+        joint: bool,
+    },
     /// The text is `Buffer::text[start..end]`.
-    Literal { start: u32, end: u32 },
+    Literal {
+        start: u32,
+        end: u32,
+    },
     /// `end` is the index just past the group's (flattened) contents.
-    Group { end: u32, delimiter: Delimiter },
+    Group {
+        end: u32,
+        delimiter: Delimiter,
+    },
 }
 
 struct Entry {
@@ -142,7 +155,9 @@ impl ParseBuffer {
         let mut text = String::new();
         flatten(inner, &mut entries, &mut text);
         let end = to_u32(entries.len());
-        let last_span = entries.first().map_or_else(Span::call_site, |e| e.tt.span());
+        let last_span = entries
+            .first()
+            .map_or_else(Span::call_site, |e| e.tt.span());
         Self {
             buffer: Rc::new(Buffer { entries, text }),
             pos: 0,
@@ -506,7 +521,6 @@ impl Iterator for ParseBuffer {
         self.bump().map(|entry| entry.tt.clone())
     }
 }
-
 
 /// Parse a whole token stream as `T`, failing if any tokens are left over.
 ///

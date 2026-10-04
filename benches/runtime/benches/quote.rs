@@ -32,7 +32,9 @@ mod quote_crate {
 
     pub fn big(g: &mut BenchmarkGroup<'_, WallTime>) {
         let ident = format_ident!("Response");
-        g.bench_function("quote", |b| b.iter(|| black_box(big_template!(quote, (#ident)))));
+        g.bench_function("quote", |b| {
+            b.iter(|| black_box(big_template!(quote, (#ident))))
+        });
     }
 
     pub fn big_to_string(g: &mut BenchmarkGroup<'_, WallTime>) {
@@ -59,8 +61,8 @@ mod parsyng_crate {
 
     use criterion::BenchmarkGroup;
     use criterion::measurement::WallTime;
-    use parsyng_bench_runtime::{big_template, field_names, small_template};
     use parsyng::{format_ident, quote};
+    use parsyng_bench_runtime::{big_template, field_names, small_template};
 
     pub fn empty(g: &mut BenchmarkGroup<'_, WallTime>) {
         g.bench_function("parsyng", |b| b.iter(|| black_box(quote! {})));
@@ -75,7 +77,9 @@ mod parsyng_crate {
 
     pub fn big(g: &mut BenchmarkGroup<'_, WallTime>) {
         let ident = format_ident!("Response");
-        g.bench_function("parsyng", |b| b.iter(|| black_box(big_template!(quote, (#ident)))));
+        g.bench_function("parsyng", |b| {
+            b.iter(|| black_box(big_template!(quote, (#ident))))
+        });
     }
 
     pub fn big_to_string(g: &mut BenchmarkGroup<'_, WallTime>) {
@@ -125,7 +129,9 @@ mod unsynn_crate {
 
     pub fn big(g: &mut BenchmarkGroup<'_, WallTime>) {
         let ident = format_ident!("Response");
-        g.bench_function("unsynn", |b| b.iter(|| black_box(big_template!(quote, (#ident)))));
+        g.bench_function("unsynn", |b| {
+            b.iter(|| black_box(big_template!(quote, (#ident))))
+        });
     }
 
     pub fn big_to_string(g: &mut BenchmarkGroup<'_, WallTime>) {
@@ -143,7 +149,9 @@ mod unsynn_crate {
         let ty = format_ident!("u32");
         g.bench_function("unsynn", |b| {
             // unsynn has no `#(...)*`; `#{...}` splices an iterator instead.
-            b.iter(|| black_box(quote! { struct S { #{ names.iter().map(|n| quote! { #n: #ty, }) } } }));
+            b.iter(|| {
+                black_box(quote! { struct S { #{ names.iter().map(|n| quote! { #n: #ty, }) } } })
+            });
         });
     }
 }
@@ -164,21 +172,21 @@ mod moxy_crate {
     pub fn small(g: &mut BenchmarkGroup<'_, WallTime>) {
         let ident = ident!("Bench");
         g.bench_function("moxy", |b| {
-            b.iter(|| black_box(small_template!(template, ({{ ident }}))));
+            b.iter(|| black_box(small_template!(template, ({ { ident } }))));
         });
     }
 
     pub fn big(g: &mut BenchmarkGroup<'_, WallTime>) {
         let ident = ident!("Response");
         g.bench_function("moxy", |b| {
-            b.iter(|| black_box(big_template!(template, ({{ ident }}))));
+            b.iter(|| black_box(big_template!(template, ({ { ident } }))));
         });
     }
 
     pub fn big_to_string(g: &mut BenchmarkGroup<'_, WallTime>) {
         let ident = ident!("Response");
         g.bench_function("moxy", |b| {
-            b.iter(|| black_box(big_template!(template, ({{ ident }})).to_string()));
+            b.iter(|| black_box(big_template!(template, ({ { ident } })).to_string()));
         });
     }
 
@@ -189,7 +197,9 @@ mod moxy_crate {
             .collect();
         let ty = ident!("u32");
         g.bench_function("moxy", |b| {
-            b.iter(|| black_box(template! { struct S { @for n in &names { {{ n }}: {{ ty }}, } } }));
+            b.iter(|| {
+                black_box(template! { struct S { @for n in &names { {{ n }}: {{ ty }}, } } })
+            });
         });
     }
 }

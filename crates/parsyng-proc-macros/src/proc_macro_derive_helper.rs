@@ -31,6 +31,7 @@ pub fn proc_macro_derive(args: TokenStream, input: TokenStream) -> Result<TokenS
     let mut derived = Out::new();
     derived.tree(derive_ident);
     let mut kind = Out::new();
-    kind.src("proc_macro_derive").group(Delimiter::Parenthesis, derived);
+    kind.src("proc_macro_derive")
+        .group(Delimiter::Parenthesis, derived);
     Ok(function.expand(kind, "(item: proc_macro::TokenStream)", parse, debug))
 }

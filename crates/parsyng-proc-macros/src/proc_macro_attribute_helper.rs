@@ -14,7 +14,10 @@ pub fn proc_macro_attribute(args: TokenStream, input: TokenStream) -> Result<Tok
         .src(",")
         .tokens(parse_all(&function.param_types[1], "item").finish());
     let mut both_failed = Out::new();
-    both_failed.src("err1.join(err2);").src(&return_error("err1")).src(";");
+    both_failed
+        .src("err1.join(err2);")
+        .src(&return_error("err1"))
+        .src(";");
     let mut arms = Out::new();
     arms.src("(Ok(attr), Ok(item)) =>")
         .tree(function.inner_ident.clone())

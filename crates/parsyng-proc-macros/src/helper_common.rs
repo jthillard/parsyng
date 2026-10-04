@@ -56,7 +56,10 @@ impl MacroFn {
         let ident = cursor.ident("the function's name")?;
         let span = ident.span();
         let Some(params) = cursor.group(Delimiter::Parenthesis) else {
-            return Err(Error::new(cursor.span(), "Expected the function's parameters"));
+            return Err(Error::new(
+                cursor.span(),
+                "Expected the function's parameters",
+            ));
         };
 
         let params_list = split_commas(params.stream());
@@ -74,13 +77,17 @@ impl MacroFn {
             .into_iter()
             .map(|param| {
                 param_type(&param).ok_or_else(|| {
-                    Error::new(span, format!("The parameters of a {what} must be typed (`name: Type`)"))
+                    Error::new(
+                        span,
+                        format!("The parameters of a {what} must be typed (`name: Type`)"),
+                    )
                 })
             })
             .collect::<Result<Vec<_>>>()?;
 
         let returns = cursor.eat_punct('-') && cursor.eat_punct('>');
-        let out_type = cursor.until(|tree| matches!(tree, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace));
+        let out_type = cursor
+            .until(|tree| matches!(tree, TokenTree::Group(g) if g.delimiter() == Delimiter::Brace));
         if !returns || out_type.is_empty() {
             return Err(Error::new(
                 span,
@@ -124,7 +131,11 @@ impl MacroFn {
     /// The call printing the macro's output, if the `debug` argument was
     /// passed.
     pub fn debug_call(&self, debug: bool) -> Out {
-        if debug { dbg_macros(&self.ident) } else { Out::new() }
+        if debug {
+            dbg_macros(&self.ident)
+        } else {
+            Out::new()
+        }
     }
 
     /// The generated `#[proc_macro*]` function: `<attrs> #[<kind>] pub fn
@@ -165,7 +176,9 @@ pub fn parse_all(ty: &[TokenTree], variable: &str) -> Out {
 
 /// `return <parsyng::error::Diagnostics as parsyng::ToTokens>::to_token_stream(&<error>).into()`
 pub fn return_error(error: &str) -> String {
-    format!("return <parsyng::error::Diagnostics as parsyng::ToTokens>::to_token_stream(&{error}).into()")
+    format!(
+        "return <parsyng::error::Diagnostics as parsyng::ToTokens>::to_token_stream(&{error}).into()"
+    )
 }
 
 /// Parse the optional `debug` argument at the end of a helper attribute's
@@ -176,7 +189,10 @@ pub fn parse_debug(args: &mut Cursor) -> Result<bool> {
     }
     let ident = args.ident("`debug` or no arguments")?;
     if ident.to_string() != "debug" || !args.is_empty() {
-        return Err(Error::new(ident.span(), "Expected `debug` or no arguments."));
+        return Err(Error::new(
+            ident.span(),
+            "Expected `debug` or no arguments.",
+        ));
     }
     Ok(true)
 }

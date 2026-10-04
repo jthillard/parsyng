@@ -1,8 +1,8 @@
 use simple_use_macros::Simple;
 use simple_use_macros::add_one;
-use simple_use_macros::{echo, nothing, repeat};
 use simple_use_macros::simple_macro;
 use simple_use_macros::simple_macro_attribute;
+use simple_use_macros::{echo, nothing, repeat};
 
 fn main() {
     println!("Hello, world!");

@@ -21,10 +21,22 @@ use proc_macro::TokenStream;
 
 #[cfg(any(feature = "small", feature = "big", feature = "parse-bench"))]
 cfg_select! {
-    feature = "syn" => { mod syn_impl; use syn_impl as imp; }
-    feature = "unsynn" => { mod unsynn_impl; use unsynn_impl as imp; }
-    feature = "moxy" => { mod moxy_impl; use moxy_impl as imp; }
-    feature = "parsyng" => { mod parsyng_impl; use parsyng_impl as imp; }
+    feature = "syn" => {
+        mod syn_impl;
+        use syn_impl as imp;
+    }
+    feature = "unsynn" => {
+        mod unsynn_impl;
+        use unsynn_impl as imp;
+    }
+    feature = "moxy" => {
+        mod moxy_impl;
+        use moxy_impl as imp;
+    }
+    feature = "parsyng" => {
+        mod parsyng_impl;
+        use parsyng_impl as imp;
+    }
 }
 
 /// Only exists so the crate exports something in the `empty` case.

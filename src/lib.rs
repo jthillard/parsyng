@@ -171,7 +171,6 @@ macro_rules! parse_quote {
     }};
 }
 
-
 #[cfg(feature = "parsing")]
 pub use parsyng_proc_macros::proc_macro_ as proc_macro;
 #[cfg(feature = "parsing")]

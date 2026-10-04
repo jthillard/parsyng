@@ -30,10 +30,14 @@ cfg_select! {
     feature = "moxy" => {
         use moxy::template as quote;
         macro_rules! format_ident {
-            ($name:literal) => { moxy::token::ident!($name) };
+            ($name:literal) => {
+                moxy::token::ident!($name)
+            };
         }
         macro_rules! expand {
-            ($template:ident, $id:ident) => { $template!(quote, ({{ $id }})) };
+            ($template:ident, $id:ident) => {
+                $template!(quote, ({ { $id } }))
+            };
         }
     }
     _ => {}

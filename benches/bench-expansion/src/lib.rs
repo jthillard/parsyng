@@ -27,7 +27,9 @@ impl HeapSize for String {
 
 impl<T: HeapSize> HeapSize for Vec<T> {
     fn heap_size_of_children(&self) -> usize {
-        self.iter().map(HeapSize::heap_size_of_children).sum::<usize>()
+        self.iter()
+            .map(HeapSize::heap_size_of_children)
+            .sum::<usize>()
             + self.capacity() * size_of::<T>()
     }
 }

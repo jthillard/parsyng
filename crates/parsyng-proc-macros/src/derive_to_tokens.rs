@@ -49,7 +49,11 @@ pub fn derive_to_tokens(input: TokenStream) -> Result<TokenStream> {
                     Fields::Named(names) => {
                         let mut patterns = Out::new();
                         for (index, name) in names.iter().enumerate() {
-                            patterns.tree(name.clone()).src(":").tree(binding(index)).src(",");
+                            patterns
+                                .tree(name.clone())
+                                .src(":")
+                                .tree(binding(index))
+                                .src(",");
                         }
                         arms.group(Delimiter::Brace, patterns);
                         names.len()

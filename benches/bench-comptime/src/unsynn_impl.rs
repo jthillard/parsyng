@@ -7,8 +7,8 @@
 
 use unsynn::{
     BraceGroupContaining, BracketGroup, Colon, Comma, CommaDelimitedVec, Cons, Either, Except,
-    Ident, LifetimeTick, ParenthesisGroup, ParenthesisGroupContaining, Parse as _, Pound,
-    PunctAny, Semicolon, ToTokens, TokenStream, TokenTree, keyword, quote, unsynn,
+    Ident, LifetimeTick, ParenthesisGroup, ParenthesisGroupContaining, Parse as _, Pound, PunctAny,
+    Semicolon, ToTokens, TokenStream, TokenTree, keyword, quote, unsynn,
 };
 
 type Input = proc_macro::TokenStream;
@@ -105,7 +105,10 @@ fn parse(input: Input) -> Result<DeriveStruct, Input> {
 }
 
 /// `(impl_generics, ty_generics)`, adding `extra_bound` to every type parameter.
-fn split_generics(generics: Option<&Generics>, extra_bound: &TokenStream) -> (TokenStream, TokenStream) {
+fn split_generics(
+    generics: Option<&Generics>,
+    extra_bound: &TokenStream,
+) -> (TokenStream, TokenStream) {
     let Some(generics) = generics else {
         return (TokenStream::new(), TokenStream::new());
     };
@@ -122,7 +125,10 @@ fn split_generics(generics: Option<&Generics>, extra_bound: &TokenStream) -> (To
         let usage = p.usage();
         quote! { #usage, }
     });
-    (quote! { < #{ impl_params } > }, quote! { < #{ ty_params } > })
+    (
+        quote! { < #{ impl_params } > },
+        quote! { < #{ ty_params } > },
+    )
 }
 
 #[cfg(feature = "small")]

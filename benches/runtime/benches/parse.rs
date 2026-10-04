@@ -16,13 +16,15 @@
 use std::hint::black_box;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use criterion::{BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime};
+use criterion::{
+    BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime,
+};
 use moxy::token::ToTokenStream as _;
-use parsyng_bench_runtime::{DERIVE_INPUT, FILES, common_subset, unsynn_grammar::DeriveStruct};
 use parsyng::ToTokens as _;
 use parsyng::ast::crate_source::Crate;
 use parsyng::ast::item::DeriveInput;
 use parsyng::parse::parse_all;
+use parsyng_bench_runtime::{DERIVE_INPUT, FILES, common_subset, unsynn_grammar::DeriveStruct};
 use quote::ToTokens as _;
 use unsynn::{IParse as _, ToTokens as _};
 
@@ -31,12 +33,20 @@ type Moxy = moxy::token::TokenStream;
 type Parsyng = parsyng::proc_macro::TokenStream;
 
 fn lex(src: &str) -> (Pm2, Parsyng, Moxy) {
-    (src.parse().unwrap(), src.parse().unwrap(), src.parse().unwrap())
+    (
+        src.parse().unwrap(),
+        src.parse().unwrap(),
+        src.parse().unwrap(),
+    )
 }
 
 /// Registers a bench only if `f` succeeds once; parsers that `todo!()`/fail
 /// on an input are reported and skipped instead of aborting the whole run.
-fn bench_if_ok<T>(g: &mut BenchmarkGroup<'_, WallTime>, name: &str, f: impl Fn() -> Result<T, String>) {
+fn bench_if_ok<T>(
+    g: &mut BenchmarkGroup<'_, WallTime>,
+    name: &str,
+    f: impl Fn() -> Result<T, String>,
+) {
     match catch_unwind(AssertUnwindSafe(&f)) {
         Ok(Ok(_)) => {
             g.bench_function(name, |b| b.iter(|| black_box(f())));
@@ -50,9 +60,15 @@ fn tokenize(c: &mut Criterion) {
     let inputs = std::iter::once(("derive_input", DERIVE_INPUT)).chain(FILES.iter().copied());
     for (name, src) in inputs {
         let mut g = c.benchmark_group(format!("tokenize/{name}"));
-        g.bench_function("proc-macro2", |b| b.iter(|| black_box(src.parse::<Pm2>().unwrap())));
-        g.bench_function("parsyng", |b| b.iter(|| black_box(src.parse::<Parsyng>().unwrap())));
-        g.bench_function("moxy", |b| b.iter(|| black_box(src.parse::<Moxy>().unwrap())));
+        g.bench_function("proc-macro2", |b| {
+            b.iter(|| black_box(src.parse::<Pm2>().unwrap()))
+        });
+        g.bench_function("parsyng", |b| {
+            b.iter(|| black_box(src.parse::<Parsyng>().unwrap()))
+        });
+        g.bench_function("moxy", |b| {
+            b.iter(|| black_box(src.parse::<Moxy>().unwrap()))
+        });
         g.finish();
     }
 }

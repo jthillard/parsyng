@@ -137,14 +137,22 @@ impl Span {
     const fn first_byte(self) -> Self {
         Self {
             lo: self.lo,
-            hi: if self.lo < self.hi { self.lo + 1 } else { self.hi },
+            hi: if self.lo < self.hi {
+                self.lo + 1
+            } else {
+                self.hi
+            },
         }
     }
 
     /// The last byte of this span.
     const fn last_byte(self) -> Self {
         Self {
-            lo: if self.lo < self.hi { self.hi - 1 } else { self.lo },
+            lo: if self.lo < self.hi {
+                self.hi - 1
+            } else {
+                self.lo
+            },
             hi: self.hi,
         }
     }
@@ -567,7 +575,10 @@ impl Ident {
         if let Some(raw) = string.strip_prefix("r#") {
             return Self::new_raw(raw, span);
         }
-        assert!(is_valid_ident(string), "`{string:?}` is not a valid identifier");
+        assert!(
+            is_valid_ident(string),
+            "`{string:?}` is not a valid identifier"
+        );
         Self {
             sym: Sym::Shared(string.into()),
             raw: false,
@@ -739,11 +750,16 @@ fn escape_utf8(string: &str, repr: &mut String) {
     while let Some(ch) = chars.next() {
         if ch == '\0' {
             // `\0` followed by a digit would read as an octal-looking escape.
-            repr.push_str(if chars.as_str().starts_with(|next: char| next.is_ascii_digit()) {
-                "\\x00"
-            } else {
-                "\\0"
-            });
+            repr.push_str(
+                if chars
+                    .as_str()
+                    .starts_with(|next: char| next.is_ascii_digit())
+                {
+                    "\\x00"
+                } else {
+                    "\\0"
+                },
+            );
         } else if ch == '\'' {
             repr.push(ch);
         } else {
@@ -975,7 +991,11 @@ impl LexError {
 
 impl fmt::Display for LexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "cannot parse string into token stream (at byte {})", self.span.lo)
+        write!(
+            f,
+            "cannot parse string into token stream (at byte {})",
+            self.span.lo
+        )
     }
 }
 

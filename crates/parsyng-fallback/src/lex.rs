@@ -91,7 +91,16 @@ struct Lexer<'a> {
 const fn is_whitespace(ch: char) -> bool {
     matches!(
         ch,
-        ' ' | '\t' | '\n' | '\r' | '\x0B' | '\x0C' | '\u{85}' | '\u{200E}' | '\u{200F}' | '\u{2028}' | '\u{2029}'
+        ' ' | '\t'
+            | '\n'
+            | '\r'
+            | '\x0B'
+            | '\x0C'
+            | '\u{85}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{2028}'
+            | '\u{2029}'
     )
 }
 
@@ -184,7 +193,10 @@ impl<'a> Lexer<'a> {
             trees.push(Ident::new_lexed(&self.src[ident_start..self.pos], raw, span).into());
             return Ok(());
         }
-        if ch == 'r' && self.rest().starts_with("r#") && self.peek_nth(2).is_some_and(is_ident_start) {
+        if ch == 'r'
+            && self.rest().starts_with("r#")
+            && self.peek_nth(2).is_some_and(is_ident_start)
+        {
             self.pos += 2;
             let ident_start = self.pos;
             self.ident_chars();
@@ -203,8 +215,18 @@ impl<'a> Lexer<'a> {
             let rest = self.rest();
             let joint = !rest.starts_with("//")
                 && !rest.starts_with("/*")
-                && rest.chars().next().is_some_and(|next| PUNCT_CHARS.contains(next));
-            let mut punct = Punct::new(ch, if joint { Spacing::Joint } else { Spacing::Alone });
+                && rest
+                    .chars()
+                    .next()
+                    .is_some_and(|next| PUNCT_CHARS.contains(next));
+            let mut punct = Punct::new(
+                ch,
+                if joint {
+                    Spacing::Joint
+                } else {
+                    Spacing::Alone
+                },
+            );
             punct.set_span(Span::new(start..self.pos));
             trees.push(punct.into());
             return Ok(());
@@ -241,7 +263,10 @@ impl<'a> Lexer<'a> {
         } else if rest.starts_with("r\"") || rest.starts_with("r#\"") || rest.starts_with("r##") {
             self.pos += 1;
             self.raw_string()
-        } else if ["br\"", "br#", "cr\"", "cr#"].iter().any(|prefix| rest.starts_with(prefix)) {
+        } else if ["br\"", "br#", "cr\"", "cr#"]
+            .iter()
+            .any(|prefix| rest.starts_with(prefix))
+        {
             self.pos += 2;
             self.raw_string()
         } else if rest.starts_with('\'') && self.is_char_literal() {
@@ -322,7 +347,9 @@ impl<'a> Lexer<'a> {
         // A fraction, unless the `.` starts a range, a method call or a
         // field access (`1..2`, `1.max(2)`).
         if self.peek() == Some('.')
-            && !self.peek_nth(1).is_some_and(|next| next == '.' || is_ident_start(next))
+            && !self
+                .peek_nth(1)
+                .is_some_and(|next| next == '.' || is_ident_start(next))
         {
             self.pos += 1;
             if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
