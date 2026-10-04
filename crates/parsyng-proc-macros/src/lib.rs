@@ -65,16 +65,27 @@ pub(crate) fn dbg_macros(macro_name: &Ident) -> Out {
 /// parsing.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// # const IGNORE_TOKENS: &str = stringify! {
 /// #[parsyng::proc_macro]
+/// # };
 /// pub fn add_one(n: u8) -> u8 {
 ///    n + 1
 /// }
 /// ```
 /// and then
-/// ```ignore
+/// ```
+/// # fn add_one(n: u8) -> u8 {
+/// #    n + 1
+/// # }
+/// # macro_rules! add_one {
+/// #     ($n:expr) => {
+/// #         add_one($n)
+/// #     };
+/// # }
 /// println!("{}", add_one!(5));
 /// // Output : 6
+/// # assert_eq!(add_one!(5), 6);
 /// ```
 ///
 /// # The `debug` argument
@@ -108,15 +119,19 @@ pub fn proc_macro_(args: TokenStream, input: TokenStream) -> TokenStream {
 /// [`proc_macro`](proc_macro_) (see its documentation for details).
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use parsyng::ast::item::Item;
 /// use parsyng::error::Result;
 ///
+/// # const IGNORE_TOKENS: &str = stringify! {
 /// #[parsyng::proc_macro_attribute]
+/// # };
 /// pub fn my_attribute(_attr: (), item: Item) -> Result<Item> {
 ///     // inspect or rewrite `item` here
 ///     Ok(item)
 /// }
+/// # let item = my_attribute((), parsyng::parse_quote!(struct S;)).unwrap();
+/// # assert_eq!(parsyng::ToTokens::to_token_stream(&item).to_string(), "struct S ;");
 /// ```
 // Export with an underscore, since it will conflicts with the `proc_macro_attribute` builtin.
 #[proc_macro_attribute]
@@ -143,17 +158,21 @@ pub fn proc_macro_attribute_(args: TokenStream, input: TokenStream) -> TokenStre
 /// [`proc_macro`](proc_macro_) for what `debug` does).
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use parsyng::ast::item::DeriveInput;
 /// use parsyng::proc_macro::TokenStream;
 ///
+/// # const IGNORE_TOKENS: &str = stringify! {
 /// #[parsyng::proc_macro_derive(MyTrait)]
+/// # };
 /// pub fn derive_my_trait(input: DeriveInput) -> TokenStream {
 ///     let name = input.ident();
 ///     parsyng::quote! {
 ///         impl MyTrait for #name {}
 ///     }
 /// }
+/// # let output = derive_my_trait(parsyng::parse_quote!(struct Foo;));
+/// # assert_eq!(output.to_string(), "impl MyTrait for Foo { }");
 /// ```
 // Export with an underscore, since it will conflicts with the `proc_macro_derive` builtin.
 #[proc_macro_attribute]
@@ -170,7 +189,9 @@ pub fn proc_macro_derive_(args: TokenStream, input: TokenStream) -> TokenStream 
 ///
 /// Equivalent to writing, for `struct Foo { a: A, b: B }`:
 ///
-/// ```ignore
+/// ```
+/// # use parsyng::proc_macro::Ident;
+/// # struct Foo { a: u8, b: Ident }
 /// impl parsyng::parse::Parse for Foo {
 ///     fn parse(input: &mut parsyng::parse::ParseBuffer) -> parsyng::error::Result<Self> {
 ///         Ok(Self {
@@ -179,6 +200,8 @@ pub fn proc_macro_derive_(args: TokenStream, input: TokenStream) -> TokenStream 
 ///         })
 ///     }
 /// }
+/// # let foo: Foo = parsyng::parse_quote!(1 x);
+/// # assert_eq!((foo.a, foo.b.to_string().as_str()), (1, "x"));
 /// ```
 ///
 /// Tuple structs parse their fields positionally, and unit structs parse
@@ -201,13 +224,17 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
 ///
 /// Equivalent to writing, for `struct Foo { a: A, b: B }`:
 ///
-/// ```ignore
+/// ```
+/// # use parsyng::proc_macro::Ident;
+/// # struct Foo { a: u8, b: Ident }
 /// impl parsyng::ToTokens for Foo {
 ///     fn to_tokens(&self, tokens: &mut parsyng::proc_macro::TokenStream) {
 ///         parsyng::ToTokens::to_tokens(&self.a, tokens);
 ///         parsyng::ToTokens::to_tokens(&self.b, tokens);
 ///     }
 /// }
+/// # let foo = Foo { a: 1, b: parsyng::format_ident!("x") };
+/// # assert_eq!(parsyng::ToTokens::to_token_stream(&foo).to_string(), "1u8 x");
 /// ```
 ///
 /// Tuple structs emit their fields positionally, unit structs emit nothing,

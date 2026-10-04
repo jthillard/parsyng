@@ -2,6 +2,8 @@ test:
     cargo test --package parsyng-fallback
     cargo test --package parsyng-core --features fallback,full,extra-traits
     cargo test --package parsyng-core --features fallback
+    cargo test --package parsyng --features fallback,full --doc
+    cargo test --package parsyng-proc-macros --doc
     cargo check --package parsyng --no-default-features
 
 # Extra arguments passed to every hyperfine run, e.g. `HYPERFINE_ARGS="--runs 3" just bench`.

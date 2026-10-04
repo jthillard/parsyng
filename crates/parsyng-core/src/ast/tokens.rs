@@ -11,7 +11,8 @@
 //! [`Token!`](crate::Token) macro, matching the punctuation or keyword's
 //! surface syntax:
 //!
-//! ```ignore
+//! ```
+//! # use parsyng_core as parsyng;
 //! use parsyng::Token;
 //!
 //! fn parse_pub(input: &mut parsyng::parse::ParseBuffer) -> parsyng::error::Result<()> {
@@ -19,6 +20,8 @@
 //!     input.parse::<Token![+]>()?;
 //!     Ok(())
 //! }
+//! # let mut input = parsyng::parse::ParseBuffer::new("pub +".parse().unwrap());
+//! # assert!(parse_pub(&mut input).is_ok() && input.is_empty());
 //! ```
 //!
 //! `Token![struct]` expands to [`StructKeyword`], `Token![+]` expands to
@@ -47,9 +50,10 @@ macro_rules! make_tokens {
         /// Names a keyword or punctuation token type by its surface syntax. See the [module docs](crate::ast::tokens)
         /// for details.
         ///
-        /// ```ignore
-        /// Token![struct] // == StructKeyword
-        /// Token![+]      // == Plus
+        /// ```
+        /// # use parsyng_core::{Token, ast::tokens::{Plus, StructKeyword}};
+        /// let _: fn(Token![struct]) -> StructKeyword = |t| t; // Token![struct] == StructKeyword
+        /// let _: fn(Token![+]) -> Plus = |t| t;               // Token![+]      == Plus
         /// ```
         ///
         /// Reference: <https://doc.rust-lang.org/reference/tokens.html#punctuation> and

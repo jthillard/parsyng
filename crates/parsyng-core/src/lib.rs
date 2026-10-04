@@ -57,11 +57,13 @@ pub use parse::Parse;
 /// Build an [`Ident`](crate::proc_macro::Ident) using `format!`-style syntax,
 /// spanned at [`Span::call_site`](crate::proc_macro::Span::call_site).
 ///
-/// ```ignore
+/// ```
+/// # use parsyng_core as parsyng;
 /// use parsyng::format_ident;
 ///
 /// let index = 3;
 /// let ident = format_ident!("field_{}", index); // `field_3`
+/// # assert_eq!(ident.to_string(), "field_3");
 /// ```
 #[macro_export]
 macro_rules! format_ident {
@@ -97,13 +99,14 @@ pub trait ToTokens {
 /// (`0usize`), which is not a valid field name: use `Index` to generate
 /// `self.0`-style accesses instead.
 ///
-/// ```no_run
+/// ```
 /// # use parsyng_core as parsyng;
 /// use parsyng::Index;
 /// # use parsyng_quote_macros::quote;
 ///
 /// let mut fields = (0..3).map(Index::from);
 /// let sum = quote! { 0 #(+ self.#fields)* }; // `0 + self.0 + self.1 + self.2`
+/// # assert_eq!(sum.to_string(), "0 + self .0 + self .1 + self .2");
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Index {

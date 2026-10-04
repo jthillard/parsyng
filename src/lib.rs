@@ -27,15 +27,25 @@
 //!
 //! A minimal function-like macro that doubles an integer literal:
 //!
-//! ```ignore
+//! ```
 //! // in a crate with `[lib] proc-macro = true`
+//! # const IGNORE_TOKENS: &str = stringify! {
 //! #[parsyng::proc_macro]
+//! # };
 //! pub fn double(n: u32) -> u32 {
 //!     n * 2
 //! }
 //! ```
 //!
-//! ```ignore
+//! ```
+//! # fn double(n: u32) -> u32 {
+//! #     n * 2
+//! # }
+//! # macro_rules! double {
+//! #     ($n:expr) => {
+//! #         double($n)
+//! #     };
+//! # }
 //! // in a crate depending on the macro crate above
 //! assert_eq!(double!(21), 42);
 //! ```
@@ -53,16 +63,14 @@
 //!
 //! # Building token streams with `quote!`
 //!
-//! ```no_run
-//! # // `no_run`: constructing real `proc_macro` tokens outside of an actual
-//! # // macro invocation panics unless the `fallback` feature is enabled;
-//! # // see "Feature flags" below.
+//! ```
 //! use parsyng::quote;
 //!
 //! let name = "world";
 //! let tokens = quote! {
 //!     println!("Hello, {}!", #name);
 //! };
+//! # assert_eq!(tokens.to_string(), r#"println ! ("Hello, {}!" , "world") ;"#);
 //! ```
 //!
 //! `#ident` interpolates a value that implements [`ToTokens`], `#{ expr }`
@@ -72,8 +80,7 @@
 //!
 //! # Parsing token streams
 //!
-//! ```no_run
-//! # // see the note above `quote!`'s example about `no_run` and `fallback`
+//! ```
 //! use parsyng::ast::item::ItemStruct;
 //! use parsyng::parse::ParseBuffer;
 //! use parsyng::quote;
@@ -157,11 +164,12 @@ pub use parsyng_quote_macros::{quote, quote_spanned};
 /// building a fixed piece of generated code), not for parsing arbitrary
 /// macro input.
 ///
-/// ```ignore
+/// ```
 /// use parsyng::ast::r#type::Type;
 /// use parsyng::parse_quote;
 ///
 /// let ty: Type = parse_quote!(Vec<u8>);
+/// # assert_eq!(parsyng::ToTokens::to_token_stream(&ty).to_string(), "Vec < u8 >");
 /// ```
 #[cfg(feature = "parsing")]
 #[macro_export]

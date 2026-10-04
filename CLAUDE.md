@@ -15,6 +15,8 @@ just test                                   # parsyng-core tests with and withou
 cargo test -p parsyng-core --features fallback,full,extra-traits <test_name>   # single test
 cargo test -p parsyng-core --features fallback,full --test parse_crates  # whole-file round-trip test
 cargo test -p parsyng-fallback                # lexer tests, using proc-macro2 as an oracle
+cargo test -p parsyng --features fallback,full --doc   # façade doctests
+cargo test -p parsyng-proc-macros --doc       # helper attribute / derive doctests
 cargo clippy --workspace --all-targets --features fallback,full
 just bench-runtime                          # criterion: quote!/parsing runtime vs syn+quote, unsynn, moxy
 just bench-comptime                         # hyperfine: clean build of the same derive per library
@@ -24,7 +26,7 @@ just bench-report                           # all of the above, then benches/rep
 HYPERFINE_ARGS="--runs 3" just bench        # fewer hyperfine runs
 ```
 
-**Tests must run with `--features fallback`** (add `full` for the whole grammar, `extra-traits` for `Debug`). Without it, token types are the compiler's real `proc_macro`, which panics outside macro expansion. This is also why many doc examples are `no_run`/`ignore`.
+**Tests must run with `--features fallback`** (add `full` for the whole grammar, `extra-traits` for `Debug`). Without it, token types are the compiler's real `proc_macro`, which panics outside macro expansion. Doc examples are real doctests run under `fallback` (no `ignore`/`no_run`): `parsyng-proc-macros` gets `parsyng` as a path-only dev-dependency for them, and examples defining a macro hide the `#[parsyng::proc_macro]`-style attribute in a `# const IGNORE_TOKENS: &str = stringify! { ... };` (rustdoc can't build proc-macro crates) and call the plain function through a hidden `macro_rules!` shim.
 
 Every crate has `#![deny(clippy::all, clippy::pedantic, clippy::nursery, clippy::cargo, rustdoc::all, missing_docs)]` — every public item needs a doc comment, and pedantic/nursery lints are hard errors.
 

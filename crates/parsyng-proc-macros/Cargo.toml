@@ -16,3 +16,7 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 
+
+[dev-dependencies]
+# Doctests only. No `version`, so `cargo publish` strips this cycle.
+parsyng = { path = "../..", features = ["fallback", "full"] }

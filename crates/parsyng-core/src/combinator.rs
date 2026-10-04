@@ -422,7 +422,7 @@ impl<T: Parse> Parse for GreedyVec<T> {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// use parsyng_core::combinator::Either;
 /// use parsyng_core::parse::ParseBuffer;
 /// use parsyng_core::proc_macro::Ident;

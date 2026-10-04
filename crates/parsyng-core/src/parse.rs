@@ -130,14 +130,17 @@ fn flatten(stream: TokenStream, out: &mut Vec<Entry>, text: &mut String) {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// use parsyng_core::ast::item::ItemStruct;
 /// use parsyng_core::parse::ParseBuffer;
 ///
 /// fn parse_struct(tokens: parsyng_core::proc_macro::TokenStream) {
 ///     let mut input = ParseBuffer::new(tokens);
 ///     let item: ItemStruct = input.parse().expect("expected a struct");
+/// #   assert_eq!(item.ident().to_string(), "Point");
 /// }
+/// # use parsyng_core as parsyng;
+/// # parse_struct(parsyng_quote_macros::quote! { struct Point; });
 /// ```
 #[derive(Clone)]
 pub struct ParseBuffer {
