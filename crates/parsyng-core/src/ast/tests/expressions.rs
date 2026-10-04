@@ -215,3 +215,45 @@ fn invalid_expressions() {
     fails::<Expression>(quote! { x as });
     fails::<Expression>(quote! { |x });
 }
+
+#[test]
+fn closure_forms() {
+    for tokens in [
+        quote! { |&x| x },
+        quote! { |&mut (a, b)| a + b },
+        quote! { |&[a, b]: &[u8; 2]| a },
+        quote! { |#[cfg(x)] a, #[allow(unused)] b: u8| a },
+        quote! { const || 1 },
+        quote! { const move |x: u8| x },
+        quote! { for<'a> |x: &'a u8| -> &'a u8 { x } },
+        quote! { for<'a> move |x: &'a u8| *x },
+        quote! { async move |x| x.await },
+    ] {
+        let source = tokens.to_string();
+        assert_eq!(kind(tokens), "closure", "{source}");
+    }
+    // `const { ... }` is still a block, and `for` still a loop.
+    assert_eq!(kind(quote! { const { 1 } }), "const");
+    assert_eq!(kind(quote! { for x in y {} }), "for");
+}
+
+#[test]
+fn struct_rest_without_base() {
+    check::<Expression>(quote! { S { x, .. } = s });
+    check::<Expression>(quote! { S { .. } = s });
+    check::<Expression>(quote! { S { a: 1, ..base } });
+    check::<Expression>(quote! { (S { x, .. }, [a, ..], (.., b)) = t });
+}
+
+#[test]
+fn if_let_guards() {
+    check::<MatchExpression>(quote! {
+        match x {
+            Some(y) if let Ok(z) = y => z,
+            Some(y) if let Ok(z) = y && z > 0 => z,
+            Some(y) if y == S { a: 1 }.a => 0,
+            _ if a || b => 1,
+            _ => 0,
+        }
+    });
+}

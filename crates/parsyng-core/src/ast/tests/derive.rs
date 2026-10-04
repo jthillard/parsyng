@@ -112,9 +112,25 @@ fn derive_input_mutation() {
 }
 
 #[test]
+fn unions() {
+    let input = check::<DeriveInput>(quote! {
+        #[repr(C)]
+        pub union U<T: Copy> where T: Clone { pub a: T, #[doc = "b"] b: f32, }
+    });
+    assert_eq!(input.ident().to_string(), "U");
+    assert!(input.generics_parameters().is_some());
+    let DeriveInput::Union(item) = &input else {
+        panic!("expected a union")
+    };
+    assert_eq!(item.fields().len(), 2);
+    assert!(item.where_clause().is_some());
+    // `union` is a weak keyword: only a keyword before the union's name.
+    fails::<DeriveInput>(quote! { union { a: u8 } });
+}
+
+#[test]
 fn derive_input_rejects_other_items() {
     fails::<DeriveInput>(quote! { fn f() {} });
-    fails::<DeriveInput>(quote! { union U { a: u8 } });
     fails::<DeriveInput>(quote! { struct S });
     fails::<DeriveInput>(quote! { struct { a: u8 } });
     fails::<DeriveInput>(quote! { struct S { a: u8 } ; });

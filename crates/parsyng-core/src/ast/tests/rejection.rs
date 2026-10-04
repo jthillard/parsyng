@@ -55,9 +55,6 @@ fn derive_level_rejections() {
 fn documented_gaps_are_errors() {
     use crate::ast::{expression::Expression, pattern::Pattern};
 
-    fails::<Pattern>(quote! { [a, .., b] });
-    fails::<Pattern>(quote! { 1..=5 });
-    fails::<Pattern>(quote! { 'a'..='z' });
     fails::<Pattern>(quote! { box x });
     fails::<Expression>(quote! { try { a? } });
     fails::<Expression>(quote! { box 1 });

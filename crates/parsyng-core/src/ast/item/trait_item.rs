@@ -7,13 +7,17 @@ use crate::{
         attributes::parse_outer_attributes,
         delimiter::Braced,
         item::TypeParamBounds,
-        item::{associated::TypeAlias, constant::ConstantItem},
+        item::{
+            ItemList, associated::TypeAlias, constant::ConstantItem,
+            macro_item::MacroInvocationItem,
+        },
         signature::FnSignature,
-        tokens::{Auto, Colon, Trait, Unsafe},
+        statements::Block,
+        tokens::{Auto, Colon, Const, Trait, Unsafe},
     },
     error::Diagnostics,
     parse::Parse,
-    proc_macro::{Delimiter, Ident, TokenStream},
+    proc_macro::{Delimiter, Ident},
 };
 
 /// A `trait` item, without its leading attributes/visibility (see
@@ -24,6 +28,7 @@ use crate::{
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TraitItem {
+    const_token: Option<Const>,
     unsafety: Option<Unsafe>,
     auto_token: Option<Auto>,
     trait_token: Trait,
@@ -31,7 +36,7 @@ pub struct TraitItem {
     generics: Option<crate::ast::item::GenericParams>,
     bounds: Option<(Colon, TypeParamBounds)>,
     where_clause: Option<crate::ast::item::WhereClause>,
-    items: Braced<Vec<TraitItemMember>>,
+    items: Braced<ItemList<TraitItemMember>>,
 }
 
 /// One member inside a [`TraitItem`]'s body.
@@ -61,6 +66,10 @@ pub enum TraitItemKind {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
     Function(Box<TraitFunction>),
+    /// A macro invocation, e.g. `m!();`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
+    Macro(MacroInvocationItem),
 }
 
 /// A trait method declaration, with an optional default body.
@@ -73,24 +82,26 @@ pub struct TraitFunction {
     body: TraitFunctionBody,
 }
 
-/// A [`TraitFunction`]'s body: a default `{ ... }` implementation (kept as a
-/// raw, unparsed [`TokenStream`]), or a bare `;` (no default).
+/// A [`TraitFunction`]'s body: a default `{ ... }` implementation, or a bare
+/// `;` (no default).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-functions-and-methods>
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum TraitFunctionBody {
     /// `{ ... }`.
-    Block(Braced<TokenStream>),
+    Block(Braced<Block>),
     /// A bare `;` (no default).
     Semicolon(crate::ast::tokens::Semicolon),
 }
 
 impl Parse for TraitItem {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let const_token = input.try_parse().ok();
         let unsafety = input.try_parse().ok();
         let auto_token = input.try_parse().ok();
         Ok(Self {
+            const_token,
             unsafety,
             auto_token,
             trait_token: input.parse()?,
@@ -112,6 +123,8 @@ impl Parse for TraitItemMember {
             TraitItemKind::Const(item)
         } else if let Ok(item) = input.try_parse() {
             TraitItemKind::Function(item)
+        } else if let Ok(item) = input.try_parse() {
+            TraitItemKind::Macro(item)
         } else {
             return Err(Diagnostics::new_error_spanned(
                 "Expected a trait item",
@@ -138,6 +151,7 @@ impl Parse for TraitFunction {
 
 impl ToTokens for TraitItem {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.const_token.to_tokens(tokens);
         self.unsafety.to_tokens(tokens);
         self.auto_token.to_tokens(tokens);
         self.trait_token.to_tokens(tokens);
@@ -162,6 +176,7 @@ impl ToTokens for TraitItemKind {
             Self::Type(item) => item.to_tokens(tokens),
             Self::Const(item) => item.to_tokens(tokens),
             Self::Function(item) => item.to_tokens(tokens),
+            Self::Macro(item) => item.to_tokens(tokens),
         }
     }
 }

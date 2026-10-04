@@ -5,8 +5,8 @@ use crate::ToTokens;
 use crate::{
     ast::{
         delimiter::Braced,
-        item::{GenericParams, WhereClause, impl_item::ImplItem},
-        tokens::{For, Impl, Not, Unsafe},
+        item::{GenericParams, ItemList, WhereClause, impl_item::ImplItem},
+        tokens::{Const, For, Impl, Not, Unsafe},
         r#type::{Type, TypePath},
     },
     parse::Parse,
@@ -14,7 +14,8 @@ use crate::{
 
 /// An `impl` block, without its leading attributes/visibility (see
 /// [`ItemImpl`](crate::ast::item::ItemImpl) for that): `unsafe impl<T>
-/// !Trait for Foo<T> where ... { ... }`.
+/// !Trait for Foo<T> where ... { ... }`, or (nightly) `impl<T> const Trait
+/// for Foo<T> { ... }`.
 ///
 /// `trait_impl` is `Some((negation, trait_path, for_token))` for a trait
 /// impl (the leading `Option<Not>` covers negative impls like `impl !Send
@@ -27,10 +28,11 @@ pub struct Implementation {
     unsafety: Option<Unsafe>,
     impl_token: Impl,
     generic_parameters: Option<GenericParams>,
+    const_token: Option<Const>,
     trait_impl: Option<(Option<Not>, TypePath, For)>,
     ty: Type,
     where_clause: Option<WhereClause>,
-    associated_items: Braced<Vec<ImplItem>>,
+    associated_items: Braced<ItemList<ImplItem>>,
 }
 
 impl Parse for Implementation {
@@ -38,6 +40,9 @@ impl Parse for Implementation {
         let unsafety = input.try_parse().ok();
         let impl_token = input.parse()?;
         let generic_parameters = input.try_parse().ok();
+        // `impl const Trait for` (nightly), but not an inherent `impl` on a
+        // `const` block type, which doesn't exist.
+        let const_token = input.try_parse().ok();
         // trait_impl can be: `!Trait for` or `TraitPath for` or absent
         let trait_impl = if let Ok(not_token) = input.try_parse::<Not>() {
             let path: TypePath = input.parse()?;
@@ -52,6 +57,7 @@ impl Parse for Implementation {
             unsafety,
             impl_token,
             generic_parameters,
+            const_token,
             trait_impl,
             ty: input.parse()?,
             where_clause: input.try_parse().ok(),
@@ -65,6 +71,7 @@ impl ToTokens for Implementation {
         self.unsafety.to_tokens(tokens);
         self.impl_token.to_tokens(tokens);
         self.generic_parameters.to_tokens(tokens);
+        self.const_token.to_tokens(tokens);
         self.trait_impl.to_tokens(tokens);
         self.ty.to_tokens(tokens);
         self.where_clause.to_tokens(tokens);

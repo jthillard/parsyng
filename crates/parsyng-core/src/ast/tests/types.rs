@@ -109,3 +109,35 @@ fn invalid_types() {
     fails::<Type>(quote! { Vec<u8 });
     fails::<Type>(quote! { <T as>::A });
 }
+
+#[test]
+fn bare_fn_params_and_binders() {
+    for tokens in [
+        quote! { fn(x: u8, _: u16) -> u8 },
+        quote! { fn(#[attr] x: u8, u8) },
+        quote! { fn(_: u8, ...) },
+        quote! { fn(a::B, c: d::E) },
+        quote! { for<'a> fn(&'a u8) -> &'a u8 },
+        quote! { for<'a, 'b> unsafe extern "C" fn(x: &'a u8, y: &'b u8) },
+    ] {
+        let source = tokens.to_string();
+        assert_eq!(variant(tokens), "fn", "{source}");
+    }
+}
+
+#[test]
+fn bound_modifiers() {
+    for tokens in [
+        quote! { impl async Fn() -> u8 },
+        quote! { impl AsyncFn(u8) + Send },
+        quote! { dyn ~const Fn() },
+        quote! { impl [const] Fn() + Send },
+        quote! { impl const Trait },
+        quote! { impl for<'a> async Fn(&'a u8) },
+        quote! { impl ?Sized + Trait },
+        quote! { impl !Send },
+        quote! { impl (?Sized) },
+    ] {
+        check::<Type>(tokens);
+    }
+}

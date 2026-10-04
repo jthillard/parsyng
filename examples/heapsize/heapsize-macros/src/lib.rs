@@ -131,5 +131,9 @@ fn heap_size_sum(data: &DeriveInput) -> TokenStream {
                 }
             }
         }
+        // The active field of a union is unknown.
+        DeriveInput::Union(_) => quote! {
+            compile_error!("`HeapSize` cannot be derived for unions")
+        },
     }
 }

@@ -27,13 +27,17 @@ use crate::ast::item::{
 use crate::{
     ast::{
         attributes::{Attribute, parse_outer_attributes},
+        delimiter::Bracketed,
         item::{
             enum_item::EnumItem,
             macro_item::{MacroInvocationItem, MacroItem, MacroRulesItem},
             r#struct::Struct,
+            union_item::UnionItem,
         },
         path::ConstArg,
-        tokens::{Colon, Comma, Const, Eq, For, Gt, Lt, Plus, Question, Quote, Where},
+        tokens::{
+            Async, Colon, Comma, Const, Eq, For, Gt, Lt, Not, Plus, Question, Quote, Tilde, Where,
+        },
         r#type::{Type, TypePath},
         visibility::Visibility,
     },
@@ -66,6 +70,7 @@ pub mod static_item;
 pub mod r#struct;
 #[cfg(feature = "full")]
 pub mod trait_item;
+pub mod union_item;
 #[cfg(feature = "full")]
 pub mod r#use;
 
@@ -86,6 +91,10 @@ pub enum Item {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/items/structs.html>
     Struct(ItemStruct),
+    /// A `union` item.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/items/unions.html>
+    Union(ItemUnion),
     /// A `const` item.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/items/constant-items.html>
@@ -188,6 +197,8 @@ pub enum DeriveInput {
     Struct(Box<ItemStruct>),
     /// Deriving on an `enum`.
     Enum(Box<ItemEnum>),
+    /// Deriving on a `union`.
+    Union(Box<ItemUnion>),
 }
 
 impl DeriveInput {
@@ -197,6 +208,7 @@ impl DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.generic_parameters(),
             Self::Enum(vis_item) => vis_item.generic_parameters(),
+            Self::Union(vis_item) => vis_item.generic_parameters(),
         }
     }
     /// Mutable access to this type's generic parameters, for adding trait
@@ -206,6 +218,7 @@ impl DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.generic_parameters_mut(),
             Self::Enum(vis_item) => vis_item.generic_parameters_mut(),
+            Self::Union(vis_item) => vis_item.generic_parameters_mut(),
         }
     }
     /// Split this type's generics into the `impl<...>`, `Type<...>` and
@@ -221,6 +234,7 @@ impl DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.split_generics_for_impl(),
             Self::Enum(vis_item) => vis_item.split_generics_for_impl(),
+            Self::Union(vis_item) => vis_item.split_generics_for_impl(),
         }
     }
 }
@@ -232,6 +246,7 @@ impl DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.ident(),
             Self::Enum(vis_item) => vis_item.ident(),
+            Self::Union(vis_item) => vis_item.ident(),
         }
     }
     /// The outer attributes of the struct or enum being derived on.
@@ -240,6 +255,7 @@ impl DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.attributes(),
             Self::Enum(vis_item) => vis_item.attributes(),
+            Self::Union(vis_item) => vis_item.attributes(),
         }
     }
     /// The visibility of the struct or enum being derived on.
@@ -248,6 +264,7 @@ impl DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.visibility(),
             Self::Enum(vis_item) => vis_item.visibility(),
+            Self::Union(vis_item) => vis_item.visibility(),
         }
     }
 }
@@ -361,6 +378,12 @@ impl Parse for Item {
                 visibility,
                 item: r#struct,
             }))
+        } else if let Ok(union_item) = input.try_parse() {
+            Ok(Self::Union(VisItem {
+                attributes,
+                visibility,
+                item: union_item,
+            }))
         } else if let Ok(const_item) = input.try_parse() {
             Ok(Self::Const(VisItem {
                 attributes,
@@ -469,6 +492,12 @@ impl Parse for DeriveInput {
                 visibility,
                 item: enum_item,
             })))
+        } else if let Ok(union_item) = input.try_parse() {
+            Ok(Self::Union(Box::new(VisItem {
+                attributes,
+                visibility,
+                item: union_item,
+            })))
         } else {
             Err(Diagnostics::new_error_spanned(
                 "Expected an derive input",
@@ -482,6 +511,7 @@ impl ToTokens for Item {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match self {
             Self::Struct(vis_item) => vis_item.to_tokens(tokens),
+            Self::Union(vis_item) => vis_item.to_tokens(tokens),
             Self::Const(vis_item) => vis_item.to_tokens(tokens),
             Self::TypeAlias(vis_item) => vis_item.to_tokens(tokens),
             Self::Use(vis_item) => vis_item.to_tokens(tokens),
@@ -504,12 +534,66 @@ impl ToTokens for DeriveInput {
         match self {
             Self::Struct(vis_item) => vis_item.to_tokens(tokens),
             Self::Enum(vis_item) => vis_item.to_tokens(tokens),
+            Self::Union(vis_item) => vis_item.to_tokens(tokens),
         }
+    }
+}
+
+/// The braced body of a `trait`, `impl` or `extern` block: inner attributes
+/// (`#![...]`), then members.
+#[cfg(feature = "full")]
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub struct ItemList<T> {
+    inner_attributes: Vec<Attribute>,
+    items: Vec<T>,
+}
+
+#[cfg(feature = "full")]
+impl<T> ItemList<T> {
+    /// The body's inner attributes, e.g. `#![allow(unused)]`.
+    #[must_use]
+    pub fn inner_attributes(&self) -> &[Attribute] {
+        &self.inner_attributes
+    }
+    /// The body's members, in order.
+    #[must_use]
+    pub fn items(&self) -> &[T] {
+        &self.items
+    }
+    /// Mutable access to the body's members.
+    pub const fn items_mut(&mut self) -> &mut Vec<T> {
+        &mut self.items
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T: Parse> Parse for ItemList<T> {
+    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let inner_attributes = crate::ast::attributes::parse_inner_attributes(input);
+        let mut items = Vec::new();
+        while !input.is_empty() {
+            items.push(input.parse()?);
+        }
+        Ok(Self {
+            inner_attributes,
+            items,
+        })
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T: ToTokens> ToTokens for ItemList<T> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.inner_attributes.to_tokens(tokens);
+        self.items.to_tokens(tokens);
     }
 }
 
 /// A [`Struct`] item with its attributes and visibility.
 pub type ItemStruct = VisItem<Struct>;
+/// A [`UnionItem`] with its attributes and visibility.
+pub type ItemUnion = VisItem<UnionItem>;
 /// A [`ConstantItem`] item with its attributes and visibility.
 #[cfg(feature = "full")]
 pub type ItemConst = VisItem<ConstantItem>;
@@ -747,9 +831,12 @@ pub struct LifetimeParam {
     bounds: Option<(Colon, LifetimeBounds)>,
 }
 
-/// A trait bound, e.g. `?Sized`, `for<'a> Trait<'a>`, optionally wrapped in
-/// parentheses (`(?Sized)`) — `group` records the parenthesizing
-/// [`Group`], if present, so it can be re-emitted on the round trip.
+/// A trait bound, e.g. `?Sized`, `for<'a> Trait<'a>` or `async Fn()`.
+///
+/// Nightly modifiers are covered too: `~const Trait`, `[const] Trait`,
+/// `const Trait` and `!Trait`. The bound may be wrapped in parentheses
+/// (`(?Sized)`) — `group` records the parenthesizing [`Group`], if
+/// present, so it can be re-emitted on the round trip.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/trait-bounds.html>
 #[derive(Clone)]
@@ -758,7 +845,64 @@ pub struct TraitBound {
     group: Option<Group>,
     question: Option<Question>,
     for_lifetimes: Option<(For, GenericParams)>,
+    constness: Option<BoundConstness>,
+    asyncness: Option<Async>,
+    polarity: Option<BoundPolarity>,
     path: TypePath,
+}
+
+/// The const-ness modifier of a [`TraitBound`] (nightly `const_trait_impl`).
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub enum BoundConstness {
+    /// `const Trait`.
+    Const(Const),
+    /// `~const Trait`.
+    Maybe(Tilde, Const),
+    /// `[const] Trait`.
+    Conditional(Bracketed<Const>),
+}
+
+/// The polarity modifier of a [`TraitBound`]: `?Trait`, or (nightly)
+/// `!Trait`.
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub enum BoundPolarity {
+    /// `?Trait`.
+    Maybe(Question),
+    /// `!Trait`.
+    Negative(Not),
+}
+
+impl Parse for BoundConstness {
+    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        if input.peek_delimiter() == Some(Delimiter::Bracket) {
+            Ok(Self::Conditional(input.parse()?))
+        } else if input.peek_punct_char().is_some_and(|(ch, _)| ch == '~') {
+            Ok(Self::Maybe(input.parse()?, input.parse()?))
+        } else {
+            Ok(Self::Const(input.parse()?))
+        }
+    }
+}
+
+impl ToTokens for BoundConstness {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Const(const_token) => const_token.to_tokens(tokens),
+            Self::Maybe(tilde, const_token) => (tilde, const_token).to_tokens(tokens),
+            Self::Conditional(bracketed) => bracketed.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for BoundPolarity {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Self::Maybe(question) => question.to_tokens(tokens),
+            Self::Negative(not) => not.to_tokens(tokens),
+        }
+    }
 }
 
 impl TraitBound {
@@ -974,30 +1118,56 @@ impl ToTokens for TypeParamBound {
         }
     }
 }
+impl TraitBound {
+    /// The bound itself, after any parentheses.
+    fn parse_unwrapped(
+        group: Option<Group>,
+        input: &mut crate::parse::ParseBuffer,
+    ) -> crate::error::Result<Self> {
+        let question = input.parse()?;
+        let for_lifetimes = if For::peek(input) {
+            input.try_parse().ok()
+        } else {
+            None
+        };
+        let constness = match (input.peek_punct_char(), input.peek_delimiter()) {
+            (Some(('~', _)), _) | (_, Some(Delimiter::Bracket)) => Some(input.parse()?),
+            _ if input.peek_ident_str() == Some("const") => Some(input.parse()?),
+            _ => None,
+        };
+        let asyncness = input.parse()?;
+        let polarity = match input.peek_punct_char() {
+            Some(('?', _)) => Some(BoundPolarity::Maybe(input.parse()?)),
+            Some(('!', _)) => Some(BoundPolarity::Negative(input.parse()?)),
+            _ => None,
+        };
+        Ok(Self {
+            group,
+            question,
+            for_lifetimes,
+            constness,
+            asyncness,
+            polarity,
+            path: input.parse()?,
+        })
+    }
+
+    fn to_tokens_unwrapped(&self, tokens: &mut TokenStream) {
+        self.question.to_tokens(tokens);
+        self.for_lifetimes.to_tokens(tokens);
+        self.constness.to_tokens(tokens);
+        self.asyncness.to_tokens(tokens);
+        self.polarity.to_tokens(tokens);
+        self.path.to_tokens(tokens);
+    }
+}
+
 impl Parse for TraitBound {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         if let Some((group, mut inner)) = input.delimited(Delimiter::Parenthesis) {
-            Ok(Self {
-                group: Some(group),
-                question: inner.parse()?,
-                for_lifetimes: if For::peek(&inner) {
-                    inner.try_parse().ok()
-                } else {
-                    None
-                },
-                path: inner.parse()?,
-            })
+            Self::parse_unwrapped(Some(group), &mut inner)
         } else {
-            Ok(Self {
-                group: None,
-                question: input.parse()?,
-                for_lifetimes: if For::peek(input) {
-                    input.try_parse().ok()
-                } else {
-                    None
-                },
-                path: input.parse()?,
-            })
+            Self::parse_unwrapped(None, input)
         }
     }
 }
@@ -1006,14 +1176,10 @@ impl ToTokens for TraitBound {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         if let Some(group) = &self.group {
             let mut inner_tokens = TokenStream::new();
-            self.question.to_tokens(&mut inner_tokens);
-            self.for_lifetimes.to_tokens(&mut inner_tokens);
-            self.path.to_tokens(&mut inner_tokens);
+            self.to_tokens_unwrapped(&mut inner_tokens);
             tokens.extend(Some(Group::new(group.delimiter(), inner_tokens)));
         } else {
-            self.question.to_tokens(tokens);
-            self.for_lifetimes.to_tokens(tokens);
-            self.path.to_tokens(tokens);
+            self.to_tokens_unwrapped(tokens);
         }
     }
 }

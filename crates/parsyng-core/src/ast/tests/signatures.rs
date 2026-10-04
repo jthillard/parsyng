@@ -114,3 +114,20 @@ fn qualifiers_generics_and_return_types() {
     fails::<FnSignature>(quote! { fn f(a) });
     fails::<FnSignature>(quote! { fn f() -> });
 }
+
+#[test]
+fn param_attributes_and_named_variadics() {
+    let signature = check::<FnSignature>(quote! {
+        fn f(#[a] self: Box<Self>, #[cfg(x)] #[b] x: u8, #[c] ...)
+    });
+    let counts: Vec<_> = signature
+        .args()
+        .iter()
+        .map(|param| param.attributes().len())
+        .collect();
+    assert_eq!(counts, [1, 2, 1]);
+    check::<FnSignature>(quote! { fn f(#[a] &mut self) });
+    let variadic = check::<FnSignature>(quote! { unsafe extern "C" fn f(x: i32, args: ...) });
+    assert_eq!(params(&variadic), ["typed", "..."]);
+    check::<FnSignature>(quote! { unsafe extern "C" fn f(x: i32, mut args: ...) });
+}

@@ -3,9 +3,9 @@
 use crate::ToTokens;
 
 use crate::{
-    ast::{delimiter::Braced, signature::FnSignature, tokens::Semicolon},
+    ast::{delimiter::Braced, signature::FnSignature, statements::Block, tokens::Semicolon},
     parse::Parse,
-    proc_macro::{Delimiter, TokenStream},
+    proc_macro::Delimiter,
 };
 
 /// A free function item, without its leading attributes/visibility (see
@@ -20,8 +20,7 @@ pub struct FunctionItem {
     body: FunctionBody,
 }
 
-/// A [`FunctionItem`]'s body: a `{ ... }` block (kept as a raw, unparsed
-/// [`TokenStream`]) or a bare `;` (a bodiless declaration, as used in
+/// A [`FunctionItem`]'s body: a `{ ... }` block or a bare `;` (a bodiless declaration, as used in
 /// `extern` blocks and trait method declarations).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html>
@@ -29,7 +28,7 @@ pub struct FunctionItem {
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum FunctionBody {
     /// `{ ... }`.
-    Block(Braced<TokenStream>),
+    Block(Braced<Block>),
     /// A bare `;` (no body).
     Semicolon(Semicolon),
 }
@@ -39,6 +38,15 @@ impl FunctionItem {
     #[must_use]
     pub const fn signature(&self) -> &FnSignature {
         &self.signature
+    }
+    /// This function's body.
+    #[must_use]
+    pub const fn body(&self) -> &FunctionBody {
+        &self.body
+    }
+    /// Mutable access to this function's body.
+    pub const fn body_mut(&mut self) -> &mut FunctionBody {
+        &mut self.body
     }
 }
 

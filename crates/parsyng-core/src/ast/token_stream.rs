@@ -2,8 +2,8 @@
 //!
 //! Also includes helpers that capture a run of tokens up to a delimiter
 //! without parsing them, for grammar positions that [`ast`](crate::ast)
-//! intentionally leaves unparsed, such as a `const`'s default-value
-//! expression or an enum discriminant.
+//! leaves unparsed so that they are available without the `full` feature,
+//! such as an enum discriminant.
 
 use crate::ToTokens;
 

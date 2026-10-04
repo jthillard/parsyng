@@ -4,7 +4,7 @@ use crate::ToTokens;
 
 use crate::{
     ast::{
-        token_stream::TokenStreamUntilSemicolon,
+        expression::Expression,
         tokens::{self, Colon, Eq, Mut, Semicolon},
         r#type::Type,
     },
@@ -12,8 +12,8 @@ use crate::{
     proc_macro::Ident,
 };
 
-/// A `static` item: `static mut NAME: Type = expr;` (the default-value
-/// expression is kept as raw, unparsed tokens).
+/// A `static` item: `static mut NAME: Type = expr;`, or `static NAME:
+/// Type;` without a value in an `extern` block.
 ///
 /// Does not include leading attributes/visibility — see
 /// [`ItemStatic`](crate::ast::item::ItemStatic) for that.
@@ -27,7 +27,7 @@ pub struct StaticItem {
     ident: Ident,
     colon: Colon,
     ty: Type,
-    default: Option<(Eq, TokenStreamUntilSemicolon)>,
+    default: Option<(Eq, Expression)>,
     semi: Semicolon,
 }
 
@@ -39,7 +39,11 @@ impl Parse for StaticItem {
             ident: input.parse()?,
             colon: input.parse()?,
             ty: input.parse()?,
-            default: input.try_parse().ok(),
+            default: if let Ok(eq) = input.peek_parse() {
+                Some((eq, input.parse()?))
+            } else {
+                None
+            },
             semi: input.parse()?,
         })
     }

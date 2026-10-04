@@ -14,28 +14,37 @@
 //!
 //! # Coverage
 //!
-//! Coverage is close to the full stable Rust grammar: items, generics and
-//! `where` clauses, types, every literal kind, expressions (including
-//! closures, `async`/`const`/`unsafe` blocks, let-chains, qualified paths,
-//! raw borrows and expression attributes), statements and most patterns.
-//! The known gaps are:
+//! Coverage is the full stable Rust grammar: items (function, trait, `impl`,
+//! inline `mod` and `extern` block bodies included), generics and `where`
+//! clauses, types, every literal kind, expressions (including closures,
+//! `async`/`const`/`unsafe` blocks, let-chains, qualified paths, raw
+//! borrows and expression attributes), statements and patterns. The
+//! nightly `const` syntax is covered too: `~const`/`[const]`/`const` trait
+//! bounds, `impl const Trait`, `const trait`, const closures, inline
+//! `const { ... }` patterns and generic const items, as well as closure
+//! binders (`for<'a> |x| ...`), `default` impl items, extern types, named
+//! C-variadics and negative bounds.
 //!
-//! - [`pattern::Pattern`] does not cover slice patterns (`[a, .., b]`),
-//!   range patterns (`1..=5`, `'a'..='z'`) or `box` patterns.
+//! The only token runs kept unparsed are attribute contents, macro bodies,
+//! and the two derive-level expressions that must stay available without
+//! `full`: array type lengths (`[T; N]`) and enum discriminants. The known
+//! gaps are:
+//!
 //! - Keywords are accepted wherever an identifier is expected (e.g.
 //!   `struct fn;` parses), except as the first segment of a macro
 //!   invocation's path.
-//! - Unstable syntax (`try`/`yeet` blocks, `box` expressions, `macro`
-//!   items with a separate argument list, ...) is not parsed.
+//! - Other unstable syntax (`try`/`yeet` blocks, `box` expressions and
+//!   patterns, `macro` items with a separate argument list, ...) is not
+//!   parsed.
 //!
 //! Unsupported syntax is reported as a regular [`Parse`](crate::parse::Parse)
 //! error spanned at the offending token; it never panics.
 //!
 //! Expressions, statements, patterns, function signatures, the [`item::Item`]
-//! enum (and every item kind but structs, enums and macro invocations) and
-//! whole source files need the `full` feature. Without it, the AST covers
-//! what derive macros need: types, paths, generics, `where` clauses,
-//! attributes, visibility, literals, structs, enums and
+//! enum (and every item kind but structs, enums, unions and macro
+//! invocations) and whole source files need the `full` feature. Without it,
+//! the AST covers what derive macros need: types, paths, generics, `where`
+//! clauses, attributes, visibility, literals, structs, enums, unions and
 //! [`item::DeriveInput`]. `Debug` implementations need the `extra-traits`
 //! feature.
 //!
@@ -62,6 +71,7 @@
 //! [`item`] additionally declares one submodule per item
 //! kind: [`item::struct`],
 //! [`item::enum_item`],
+//! [`item::union_item`],
 //! [`item::function`],
 //! [`item::trait_item`],
 //! [`item::implementation`],

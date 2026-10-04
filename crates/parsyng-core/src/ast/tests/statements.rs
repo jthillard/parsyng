@@ -114,3 +114,54 @@ fn statement_and_crate_nodes() {
         impl A { type Assoc; const VALUE: u8; }
     });
 }
+
+#[test]
+fn macro_statements_follow_rustc() {
+    // A statement macro: braces not followed by `.`/`?`, or a `;`/the end
+    // of the block after the invocation.
+    for tokens in [
+        quote! { m! {} },
+        quote! { m!(); },
+        quote! { m![x]; },
+        quote! { m!() },
+    ] {
+        let source = tokens.to_string();
+        assert_eq!(kind(tokens), "item", "{source}");
+    }
+    // Anything else is an expression.
+    for (tokens, expected) in [
+        (quote! { m! {}.len(); }, "expr;"),
+        (quote! { m!().len() }, "expr"),
+        (quote! { m![1] + 1; }, "expr;"),
+        (quote! { m!()?; }, "expr;"),
+    ] {
+        let source = tokens.to_string();
+        assert_eq!(kind(tokens), expected, "{source}");
+    }
+}
+
+#[test]
+fn blocks_with_inner_attributes() {
+    let block = check::<Braced<crate::ast::statements::Block>>(quote! {{
+        #![allow(unused)]
+        #![cfg_attr(x, deny(y))]
+        let x = 1;
+    }});
+    assert_eq!(block.inner_ref().inner_attributes().len(), 2);
+    assert_eq!(block.inner_ref().statements().len(), 1);
+    check::<Statement>(quote! { if a { #![allow(x)] b() } });
+    check::<Statement>(quote! { let x = unsafe { #![allow(x)] f() }; });
+}
+
+#[test]
+fn only_the_tail_may_omit_its_semicolon() {
+    use crate::ast::statements::Block;
+
+    check::<Braced<Block>>(quote! {{ a; b }});
+    check::<Braced<Block>>(quote! {{ if a {} b }});
+    check::<Braced<Block>>(quote! {{ m! {} b }});
+    check::<Braced<Block>>(quote! {{ m!(); b }});
+    fails::<Braced<Block>>(quote! {{ a b }});
+    fails::<Braced<Block>>(quote! {{ a.b() c }});
+    fails::<Braced<Block>>(quote! {{ m!() b }});
+}

@@ -1,6 +1,6 @@
-//! A hand-written tour of the syntax `parsyng` supports, round-tripped by
-//! `tests/parse_crates.rs` (items as a `Crate`, every function body as
-//! statements). Grammar gaps documented in the `ast` module are left out.
+//! A hand-written tour of the stable syntax `parsyng` supports, round-tripped
+//! as a `Crate` by `tests/parse_crates.rs`. Nightly syntax is covered by the
+//! unit tests in `src/ast/tests/`.
 #![allow(dead_code, unused)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -50,6 +50,14 @@ pub enum Shape<T> {
     Named { x: T, #[doc = "y"] y: i64 },
     Discriminant = 1 << 4,
     Block = { 3 + 4 },
+}
+
+/// A union.
+#[repr(C)]
+pub union Bits<T: Copy> {
+    pub int: u32,
+    float: f32,
+    other: T,
 }
 
 #[derive(Debug)]
@@ -123,7 +131,27 @@ extern "C" {
 }
 
 unsafe extern "C" {
+    #![allow(non_upper_case_globals)]
+    /// Safe to call.
     pub safe fn sqrt(x: f64) -> f64;
+    pub unsafe fn free(ptr: *mut u8);
+    fn printf(format: *const u8, ...) -> i32;
+    pub safe static VERSION: u32;
+    unsafe static mut ERRNO: i32;
+}
+
+pub struct Handlers {
+    callback: fn(code: i32, _: *const u8) -> bool,
+    generic: for<'a> fn(&'a str) -> &'a str,
+}
+
+pub fn run<F: async Fn(u8) -> u8>(#[allow(unused)] f: F, #[cfg(all())] mut n: u8) {}
+
+impl Unit {
+    pub const ZERO: u8 = 0;
+    pub(crate) fn new() -> Self {
+        Unit
+    }
 }
 
 macro_rules! paren_macro ( ($x:expr) => { $x } );
@@ -270,6 +298,43 @@ async fn awaiting(fut: impl core::future::Future<Output = u8>) -> u8 {
     let value = fut.await;
     let chained = async { 1 }.await + value;
     chained
+}
+
+fn more_syntax(items: &[u8], value: Option<Result<u8, u8>>) -> usize {
+    #![allow(unused)]
+    let doubled: Vec<_> = items.iter().map(|&x| x * 2).collect();
+    let summed = items.iter().fold(0, |acc, &(x)| acc + usize::from(x));
+    let mut first = 0;
+    let mut rest = 0;
+    [first, rest, ..] = [1, 2, 3];
+    Tuple { 0: _, .. } = Tuple(&1, 2);
+    let len = vec![1, 2].len() + format!("{}", 1).len();
+    let class = match items {
+        [] => 0,
+        [one] => 1,
+        [first, .., last] if first == last => 2,
+        [_, rest @ ..] => rest.len(),
+    };
+    let grade = match items.len() {
+        0 => 'z',
+        1..=9 => 'a',
+        10..100 => 'b',
+        100.. => 'c',
+    };
+    let letter = match 'q' {
+        'a'..='m' => 1,
+        'n'..='z' | 'A'..='Z' => 2,
+        _ => 3,
+    };
+    let guarded = match value {
+        Some(inner) if let Ok(n) = inner && n > 0 => n,
+        | Some(_) | None => 0,
+    };
+    let generic = match Some(1u8) {
+        Option::<u8>::Some(x) => x,
+        Option::<u8>::None => 0,
+    };
+    class + len
 }
 
 fn patterns(value: Shape<u8>, pair: &(u8, u8), opt: Option<Result<u8, u8>>) {

@@ -278,18 +278,23 @@ fn parse_integer_literal(literal: String, span: Span) -> Result<LiteralNumber> {
             c if radix == 10 && c.is_ascii_digit() => {}
             c if radix == 8 && matches!(c, b'0'..=b'7') => {}
             c if radix == 2 && matches!(c, b'0'..=b'1') => {}
+            // `_` separators may appear anywhere, even right after a radix
+            // prefix (`0x_FF`).
             b'_' => {
-                if !has_digit {
-                    return Err(Diagnostics::new_error_spanned(
-                        "Expected a digit, found `_`",
-                        span,
-                    ));
-                }
+                position += 1;
+                continue;
             }
             _ => break,
         }
         has_digit = true;
         position += 1;
+    }
+
+    if !has_digit {
+        return Err(Diagnostics::new_error_spanned(
+            "Expected a digit in integer literal",
+            span,
+        ));
     }
 
     let suffix = position..len;

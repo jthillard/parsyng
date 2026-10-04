@@ -5,18 +5,19 @@ use crate::ToTokens;
 use crate::ast::item::macro_item::MacroInvocationItem;
 use crate::{
     ast::{
+        attributes::{Attribute, parse_outer_attributes},
         delimiter::{Bracketed, Parenthesized},
-        item::{Lifetime, TypeParamBounds},
+        item::{GenericParams, Lifetime, TypeParamBounds},
         path::{TypePathSegment, parse_leading_path_sep, parse_path_tail},
         tokens::{
-            And, As, Comma, Const, Dyn, Extern, Fn, Gt, Impl, Lt, Mut, Not, PathSep, RArrow,
-            Semicolon, Star, Unsafe,
+            And, As, Colon, Comma, Const, Dyn, Extern, Fn, For, Gt, Impl, Lt, Mut, Not, PathSep,
+            RArrow, Semicolon, Star, Unsafe,
         },
     },
     combinator::Punctuated,
     error::Diagnostics,
     parse::{Parse, ParseBuffer},
-    proc_macro::{Delimiter, Literal, Span, TokenStream},
+    proc_macro::{Delimiter, Ident, Literal, Span, TokenStream},
 };
 
 /// A type expression: `T`, `&'a mut T`, `[T; N]`, `dyn Trait`, `fn(A) -> B`,
@@ -133,6 +134,17 @@ impl TypePath {
         })
     }
 
+    /// This path's sole identifier, if it is a bare identifier (no leading
+    /// `::`, generic arguments or other segments).
+    #[cfg(feature = "full")]
+    pub(crate) const fn as_single_ident(&self) -> Option<&Ident> {
+        if self.start_token.is_none() && self.paths.is_empty() {
+            self.root.as_bare_ident()
+        } else {
+            None
+        }
+    }
+
     /// The span of this path's first token (its leading `::`, if any).
     #[must_use]
     pub fn span(&self) -> Span {
@@ -146,7 +158,9 @@ impl TypeBareFn {
     /// The span of this function pointer type's first token.
     #[must_use]
     pub fn span(&self) -> Span {
-        if let Some(unsafety) = &self.unsafety {
+        if let Some((for_token, _)) = &self.for_lifetimes {
+            for_token.span()
+        } else if let Some(unsafety) = &self.unsafety {
             unsafety.span()
         } else if let Some((extern_token, _)) = &self.extern_token {
             extern_token.span()
@@ -223,12 +237,14 @@ pub struct TypeDynTrait {
     bounds: TypeParamBounds,
 }
 
-/// A bare function pointer type: `unsafe extern "C" fn(A, ...) -> B`.
+/// A bare function pointer type: `for<'a> unsafe extern "C" fn(x: &'a A,
+/// ...) -> B`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeBareFn {
+    for_lifetimes: Option<(For, GenericParams)>,
     unsafety: Option<Unsafe>,
     extern_token: Option<(Extern, Option<Literal>)>,
     fn_token: Fn,
@@ -236,14 +252,15 @@ pub struct TypeBareFn {
     return_type: Option<(RArrow, Box<Type>)>,
 }
 
-/// One parameter of a [`TypeBareFn`]: a type, or the C-variadic `...`.
+/// One parameter of a [`TypeBareFn`]: an optionally named type, or the
+/// C-variadic `...`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/types/function-pointer.html>
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum BareFnParam {
-    /// A typed parameter.
-    Type(Box<Type>),
+    /// A typed parameter: `u8`, `x: u8` or `_: u8`.
+    Type(BareFnArg),
     /// C-variadic parameter `...`.
     Variadic(crate::ast::tokens::DotDotDot),
 }
@@ -331,18 +348,67 @@ impl Parse for TypeDynTrait {
     }
 }
 
+/// A typed parameter of a [`TypeBareFn`], with its attributes and optional
+/// name: `#[attr] x: u8`.
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub struct BareFnArg {
+    attributes: Vec<Attribute>,
+    name: Option<(Ident, Colon)>,
+    ty: Box<Type>,
+}
+
+impl BareFnArg {
+    /// The parameter's name, if it has one (`_` included).
+    #[must_use]
+    pub fn name(&self) -> Option<&Ident> {
+        self.name.as_ref().map(|(name, _)| name)
+    }
+    /// The parameter's type.
+    #[must_use]
+    pub fn ty(&self) -> &Type {
+        &self.ty
+    }
+}
+
 impl Parse for BareFnParam {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let attributes = parse_outer_attributes(input);
         if let Ok(variadic) = input.try_parse() {
-            Ok(Self::Variadic(variadic))
-        } else {
-            Ok(Self::Type(Box::new(input.parse()?)))
+            return Ok(Self::Variadic(variadic));
         }
+        // `name:` but not a `name::path`.
+        let name = if input.peek_ident_str().is_some()
+            && input.nth_punct_char(1).is_some_and(|(ch, _)| ch == ':')
+            && input.nth_punct_char(2).is_none_or(|(ch, _)| ch != ':')
+        {
+            Some((input.parse()?, input.parse()?))
+        } else {
+            None
+        };
+        Ok(Self::Type(BareFnArg {
+            attributes,
+            name,
+            ty: Box::new(input.parse()?),
+        }))
+    }
+}
+
+impl ToTokens for BareFnArg {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attributes.to_tokens(tokens);
+        self.name.to_tokens(tokens);
+        self.ty.to_tokens(tokens);
     }
 }
 
 impl Parse for TypeBareFn {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let for_lifetimes = if input.peek_ident_str() == Some("for") {
+            Some((input.parse()?, input.parse()?))
+        } else {
+            None
+        };
         let unsafety = input.try_parse().ok();
         let extern_token = if let Ok(extern_token) = input.try_parse() {
             let abi = input.try_parse().ok();
@@ -352,6 +418,7 @@ impl Parse for TypeBareFn {
         };
         let fn_token = input.parse()?;
         Ok(Self {
+            for_lifetimes,
             unsafety,
             extern_token,
             fn_token,
@@ -432,7 +499,7 @@ impl Parse for Type {
             }
         }
         match input.peek_ident_str() {
-            Some("fn" | "unsafe" | "extern") => {
+            Some("fn" | "unsafe" | "extern" | "for") => {
                 return input.parse().map(|bare_fn| Self::BareFn(Box::new(bare_fn)));
             }
             Some("impl") => return input.parse().map(Self::ImplTrait),
@@ -539,6 +606,7 @@ impl ToTokens for TypeDynTrait {
 
 impl ToTokens for TypeBareFn {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.for_lifetimes.to_tokens(tokens);
         self.unsafety.to_tokens(tokens);
         self.extern_token.to_tokens(tokens);
         self.fn_token.to_tokens(tokens);

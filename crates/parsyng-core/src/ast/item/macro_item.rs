@@ -108,6 +108,13 @@ impl Parse for MacroItem {
 }
 
 impl MacroInvocationItem {
+    /// Whether this invocation needs a `;` to end a statement or item: a
+    /// `(...)`/`[...]` invocation without one.
+    #[cfg(feature = "full")]
+    pub(crate) fn needs_semicolon(&self) -> bool {
+        self.semi.is_none() && self.body.delimiter() != Delimiter::Brace
+    }
+
     /// Parse an invocation without a trailing `;`, as in type position,
     /// where a following `;` belongs to the enclosing item.
     pub(crate) fn parse_without_semicolon(

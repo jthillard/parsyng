@@ -85,21 +85,6 @@ impl SimplePath {
             .as_ref()
             .map_or_else(|| self.root.span(), |start| start.spans()[0])
     }
-    /// This path's sole identifier, if it has no leading `::` and no
-    /// additional `::`-separated segments.
-    ///
-    /// Used by [`ast::pattern`](crate::ast::pattern) to tell a bare
-    /// identifier pattern (`name`) apart from a longer path pattern
-    /// (`Foo::Bar`).
-    #[must_use]
-    #[cfg(feature = "full")]
-    pub(crate) const fn as_single_ident(&self) -> Option<&Ident> {
-        if self.start_token.is_none() && self.paths.is_empty() {
-            Some(&self.root)
-        } else {
-            None
-        }
-    }
 }
 
 impl ToTokens for SimplePath {
@@ -125,6 +110,16 @@ pub struct TypePathSegment {
 }
 
 impl TypePathSegment {
+    /// This segment's identifier, if it has no generic arguments.
+    #[cfg(feature = "full")]
+    pub(crate) const fn as_bare_ident(&self) -> Option<&Ident> {
+        if self.args.is_none() {
+            Some(&self.path_ident)
+        } else {
+            None
+        }
+    }
+
     /// The span of this segment's identifier.
     #[must_use]
     pub fn span(&self) -> Span {

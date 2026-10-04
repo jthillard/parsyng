@@ -35,11 +35,11 @@ use crate::{
     ast::{
         attributes::{Attribute, parse_outer_attributes},
         delimiter::{Braced, Bracketed, Parenthesized},
-        item::Lifetime,
+        item::{GenericParams, Lifetime},
         literal::{Literal, LiteralNumber},
         path::{GenericArgs, SimplePath},
         pattern::Pattern,
-        statements::Statement,
+        statements::Block,
         tokens::{
             And, AndAnd, AndEq, As, Async, Await, Break, Caret, CaretEq, Colon, Comma, Const,
             Continue, Dot, DotDot, DotDotEq, Else, Eq, EqEq, FatArrow, For, Ge, Gt, If, In, Le,
@@ -271,7 +271,7 @@ pub enum ExpressionWithBlock {
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct BlockExpression {
     label: Option<(Lifetime, Colon)>,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// An `unsafe { ... }` block.
@@ -281,7 +281,7 @@ pub struct BlockExpression {
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UnsafeBlockExpression {
     unsafe_token: Unsafe,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// A `loop { ... }` expression, optionally labeled.
@@ -292,7 +292,7 @@ pub struct UnsafeBlockExpression {
 pub struct LoopExpression {
     label: Option<(Lifetime, Colon)>,
     loop_token: Loop,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// An `if condition { ... } else ...` expression.
@@ -303,7 +303,7 @@ pub struct LoopExpression {
 pub struct IfExpression {
     if_token: If,
     condition: Conditions,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
     else_branch: Option<(Else, ElseExpression)>,
 }
 
@@ -317,7 +317,7 @@ pub enum ElseExpression {
     /// `else if ...` (chaining into another `if`).
     If(Box<IfExpression>),
     /// `else { ... }`.
-    Block(Braced<Vec<Statement>>),
+    Block(Braced<Block>),
 }
 
 /// The condition of an [`IfExpression`]/[`WhileExpression`].
@@ -364,7 +364,7 @@ pub struct WhileExpression {
     label: Option<(Lifetime, Colon)>,
     while_token: While,
     condition: Conditions,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// A `for pat in expr { ... }` expression, optionally labeled.
@@ -378,7 +378,7 @@ pub struct ForExpression {
     pat: Pattern,
     in_token: In,
     expr: Expression,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// A `match scrutinee { arm* }` expression.
@@ -401,7 +401,7 @@ pub struct MatchExpression {
 pub struct MatchArm {
     attrs: Vec<Attribute>,
     pat: Pattern,
-    guard: Option<(If, Expression)>,
+    guard: Option<(If, Conditions)>,
     fat_arrow: FatArrow,
     body: Expression,
     comma: Option<Comma>,
@@ -415,7 +415,7 @@ pub struct MatchArm {
 pub struct AsyncBlockExpression {
     async_token: Async,
     move_token: Option<Move>,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// A `const { ... }` block.
@@ -425,7 +425,7 @@ pub struct AsyncBlockExpression {
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ConstBlockExpression {
     const_token: Const,
-    block: Braced<Vec<Statement>>,
+    block: Braced<Block>,
 }
 
 /// `expr.await`.
@@ -799,6 +799,8 @@ pub struct MethodCallExpression {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ClosureExpression {
+    for_lifetimes: Option<(For, GenericParams)>,
+    const_token: Option<Const>,
     async_token: Option<Async>,
     move_token: Option<Move>,
     params: ClosureParams,
@@ -822,6 +824,7 @@ pub enum ClosureParams {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ClosureParam {
+    attrs: Vec<Attribute>,
     pat: Pattern,
     ty: Option<(Colon, Type)>,
 }
@@ -842,7 +845,7 @@ pub struct StructExpression {
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct StructExprFields {
     fields: Punctuated<StructExprField, Comma, StopOnError>,
-    rest: Option<(DotDot, Box<Expression>)>,
+    rest: Option<(DotDot, Option<Box<Expression>>)>,
 }
 
 /// One field inside a [`StructExprFields`] list, with its outer attributes:
@@ -1340,6 +1343,14 @@ impl ExpressionWithoutBlock {
                 "break" => return Ok(wrap(Self::Break(input.parse()?))),
                 "continue" => return Ok(wrap(Self::Continue(input.parse()?))),
                 "move" => return Ok(wrap(Self::Closure(input.parse()?))),
+                // `for<'a> |x| ...` (nightly closure binders), not a loop.
+                "for" if input.nth_punct_char(1).is_some_and(|(ch, _)| ch == '<') => {
+                    return Ok(wrap(Self::Closure(input.parse()?)));
+                }
+                // `const || ...` (nightly const closures), not a block.
+                "const" if input.nth_delimiter(1) != Some(Delimiter::Brace) => {
+                    return Ok(wrap(Self::Closure(input.parse()?)));
+                }
                 // `async { ... }`/`async move { ... }` is a block, parsed
                 // as a primary below; anything else is an async closure.
                 "async" => {
@@ -1838,6 +1849,12 @@ delegate_to_precedence_chain!(CallExpression, Call, "Expected a call expression"
 
 impl Parse for ClosureExpression {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
+        let for_lifetimes = if input.peek_ident_str() == Some("for") {
+            Some((input.parse()?, input.parse()?))
+        } else {
+            None
+        };
+        let const_token = input.try_parse().ok();
         let async_token = input.try_parse().ok();
         let move_token = input.try_parse().ok();
         let params = input.parse()?;
@@ -1848,6 +1865,8 @@ impl Parse for ClosureExpression {
             input.parse()?
         };
         Ok(Self {
+            for_lifetimes,
+            const_token,
             async_token,
             move_token,
             params,
@@ -1869,6 +1888,7 @@ impl Parse for ClosureParams {
 impl Parse for ClosureParam {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
         Ok(Self {
+            attrs: parse_outer_attributes(input),
             // not `Pattern::parse` — a trailing `|` here must be able to
             // mean the closure's own closing delimiter, not another
             // or-pattern alternative (see `Pattern::parse_no_top_alt`).
@@ -1908,8 +1928,15 @@ impl Parse for StructExprMember {
 impl Parse for StructExprFields {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
         let fields = input.parse()?;
+        // `..base`, or a bare `..` in a destructuring assignment
+        // (`S { a, .. } = s`).
         let rest = if let Ok(dot_dot) = input.try_parse::<DotDot>() {
-            Some((dot_dot, Box::new(input.parse()?)))
+            let base = if input.is_empty() {
+                None
+            } else {
+                Some(Box::new(input.parse()?))
+            };
+            Some((dot_dot, base))
         } else {
             None
         };
@@ -1938,6 +1965,8 @@ impl Parse for MacroCallExpression {
 
 impl ToTokens for ClosureExpression {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.for_lifetimes.to_tokens(tokens);
+        self.const_token.to_tokens(tokens);
         self.async_token.to_tokens(tokens);
         self.move_token.to_tokens(tokens);
         self.params.to_tokens(tokens);
@@ -1959,6 +1988,7 @@ impl ToTokens for ClosureParams {
 }
 impl ToTokens for ClosureParam {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attrs.to_tokens(tokens);
         self.pat.to_tokens(tokens);
         self.ty.to_tokens(tokens);
     }
@@ -2490,8 +2520,16 @@ impl Parse for MatchArm {
     fn parse(input: &mut ParseBuffer) -> Result<Self> {
         let attrs = parse_outer_attributes(input);
         let pat = input.parse()?;
+        // `if expr`, or an `if let` guard (`if let Ok(x) = y && x > 0`).
         let guard = if let Ok(if_token) = input.try_parse::<If>() {
-            Some((if_token, input.parse()?))
+            let condition = if has_top_level_let(input)
+                && let Ok(chain) = input.try_advance(parse_let_chain)
+            {
+                chain
+            } else {
+                Conditions::Expr(input.parse()?)
+            };
+            Some((if_token, condition))
         } else {
             None
         };

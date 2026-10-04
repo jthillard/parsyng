@@ -4,19 +4,75 @@ use crate::ToTokens;
 
 use crate::{
     ast::{
-        attributes::{Attribute, parse_outer_attributes},
+        attributes::{Attribute, parse_inner_attributes, parse_outer_attributes},
         delimiter::Braced,
         expression::{
             Expression, ExpressionWithBlock, ExpressionWithoutBlock, continues_with_postfix,
         },
         item::Item,
+        path::SimplePath,
         pattern::Pattern,
-        tokens::{Colon, Else, Eq, Let, Semicolon},
+        tokens::{Colon, Else, Eq, Let, Not, Semicolon},
         r#type::Type,
     },
     error::Diagnostics,
     parse::Parse,
+    proc_macro::Delimiter,
 };
+
+/// The contents of a `{ ... }` block: inner attributes (`#![...]`), then
+/// statements.
+///
+/// Reference: <https://doc.rust-lang.org/reference/expressions/block-expr.html>
+#[derive(Clone, Default)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub struct Block {
+    inner_attributes: Vec<Attribute>,
+    statements: Vec<Statement>,
+}
+
+impl Block {
+    /// The block's inner attributes, e.g. `#![allow(unused)]`.
+    #[must_use]
+    pub fn inner_attributes(&self) -> &[Attribute] {
+        &self.inner_attributes
+    }
+    /// The block's statements, in order.
+    #[must_use]
+    pub fn statements(&self) -> &[Statement] {
+        &self.statements
+    }
+    /// Mutable access to the block's statements.
+    pub const fn statements_mut(&mut self) -> &mut Vec<Statement> {
+        &mut self.statements
+    }
+}
+
+impl Parse for Block {
+    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let inner_attributes = parse_inner_attributes(input);
+        let mut statements = Vec::new();
+        while !input.is_empty() {
+            let statement: Statement = input.parse()?;
+            // Only the block's tail may omit its `;`.
+            if !input.is_empty() && statement.needs_semicolon() {
+                return Err(Diagnostics::new_error_spanned("Expected `;`", input.span()));
+            }
+            statements.push(statement);
+        }
+        Ok(Self {
+            inner_attributes,
+            statements,
+        })
+    }
+}
+
+impl ToTokens for Block {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.inner_attributes.to_tokens(tokens);
+        self.statements.to_tokens(tokens);
+    }
+}
 
 /// One statement inside a block: an empty `;`, a local item declaration, or
 /// an expression.
@@ -77,14 +133,54 @@ pub struct LetStatement {
 struct LetInit {
     eq: Eq,
     expr: Expression,
-    else_branch: Option<(Else, Braced<Vec<Statement>>)>,
+    else_branch: Option<(Else, Braced<Block>)>,
+}
+
+/// Whether the macro invocation at `input` (if any) is the start of an
+/// expression statement rather than a macro statement, following `rustc`:
+/// a braced invocation is a statement unless a postfix `.`/`?` follows
+/// (`m! {}.len()`), and any other invocation is a statement only when
+/// followed by `;` or the end of the block (`m!().len()`, `m![] + 1` are
+/// expressions).
+fn is_expression_macro(input: &crate::parse::ParseBuffer) -> bool {
+    let mut fork = input.clone();
+    parse_outer_attributes(&mut fork);
+    if fork.parse::<SimplePath>().is_err() || fork.parse::<Not>().is_err() {
+        return false;
+    }
+    let Some(group) = fork.group() else {
+        return false;
+    };
+    if group.delimiter() == Delimiter::Brace {
+        continues_with_postfix(&fork)
+    } else {
+        !(fork.is_empty() || fork.peek_punct_char().is_some_and(|(ch, _)| ch == ';'))
+    }
+}
+
+impl Statement {
+    /// Whether this statement must be followed by a `;` unless it ends its
+    /// block: an expression without a block, or a `(...)`/`[...]` macro
+    /// invocation, with no `;`.
+    fn needs_semicolon(&self) -> bool {
+        match self {
+            Self::ExpressionWithoutBlock(_, semicolon) => semicolon.is_none(),
+            Self::Item(item) => match &**item {
+                Item::MacroInvocation(invocation) => invocation.needs_semicolon(),
+                _ => false,
+            },
+            Self::Semicolon(_) | Self::Let(_) | Self::ExpressionWithBlock(..) => false,
+        }
+    }
 }
 
 impl Parse for Statement {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         if let Ok(semicolon) = input.try_parse() {
             Ok(Self::Semicolon(semicolon))
-        } else if let Ok(item) = input.try_parse() {
+        } else if !is_expression_macro(input)
+            && let Ok(item) = input.try_parse()
+        {
             Ok(Self::Item(item))
         } else if let Ok(let_statement) = input.try_parse() {
             Ok(Self::Let(let_statement))

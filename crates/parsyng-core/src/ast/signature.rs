@@ -5,6 +5,7 @@ use crate::ToTokens;
 
 use crate::{
     ast::{
+        attributes::{Attribute, parse_outer_attributes},
         delimiter::Parenthesized,
         item::{GenericParams, Lifetime, WhereClause},
         pattern::Pattern,
@@ -41,7 +42,8 @@ pub struct FnSignature {
     where_clause: Option<WhereClause>,
 }
 
-/// One parameter in a [`FnSignature`]'s parameter list.
+/// One parameter in a [`FnSignature`]'s parameter list, with its outer
+/// attributes.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#function-parameters>
 #[derive(Clone)]
@@ -53,10 +55,22 @@ pub enum FnParam {
     SelfParam(SelfParam),
     /// A typed parameter: `pattern: Type`.
     Typed(PatType),
-    /// C-variadic parameter `...`.
+    /// C-variadic parameter `...`, or (nightly) `args: ...`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/items/functions.html#r-items.fn.params.varargs>
-    Variadic(DotDotDot),
+    Variadic(VariadicParam),
+}
+
+/// A C-variadic parameter: `...`, or `args: ...` in a variadic function
+/// definition (nightly).
+///
+/// Reference: <https://doc.rust-lang.org/reference/items/functions.html#r-items.fn.params.varargs>
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub struct VariadicParam {
+    attributes: Vec<Attribute>,
+    pat: Option<(Pattern, Colon)>,
+    dots: DotDotDot,
 }
 
 /// A `self` receiver parameter, e.g. `&'a mut self` or `self: Box<Self>`.
@@ -65,6 +79,7 @@ pub enum FnParam {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct SelfParam {
+    attributes: Vec<Attribute>,
     reference: Option<(And, Option<Lifetime>)>,
     mutability: Option<Mut>,
     self_token: SelfValue,
@@ -77,12 +92,22 @@ pub struct SelfParam {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatType {
+    attributes: Vec<Attribute>,
     pat: Pattern,
     colon: Colon,
     ty: Type,
 }
 
 impl FnParam {
+    /// This parameter's outer attributes, e.g. `#[cfg(x)]`.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        match self {
+            Self::SelfParam(self_param) => &self_param.attributes,
+            Self::Typed(pat_type) => &pat_type.attributes,
+            Self::Variadic(variadic) => &variadic.attributes,
+        }
+    }
     /// This parameter's type, if it has one written out (`None` for
     /// [`Variadic`](Self::Variadic), and for a bare `self`/`&self` with no
     /// explicit `: Type` annotation).
@@ -160,14 +185,28 @@ impl Parse for FnSignature {
 
 impl Parse for FnParam {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        if let Ok(variadic) = input.try_parse() {
-            Ok(Self::Variadic(variadic))
-        } else if let Ok(self_param) = input.try_parse() {
+        let attributes = parse_outer_attributes(input);
+        if let Ok(dots) = input.try_parse() {
+            Ok(Self::Variadic(VariadicParam {
+                attributes,
+                pat: None,
+                dots,
+            }))
+        } else if let Ok(mut self_param) = input.try_parse::<SelfParam>() {
+            self_param.attributes = attributes;
             Ok(Self::SelfParam(self_param))
-        } else if let Ok(pat) = input.try_parse() {
+        } else if let Ok((pat, colon)) = input.try_parse::<(Pattern, Colon)>() {
+            if let Ok(dots) = input.try_parse() {
+                return Ok(Self::Variadic(VariadicParam {
+                    attributes,
+                    pat: Some((pat, colon)),
+                    dots,
+                }));
+            }
             Ok(Self::Typed(PatType {
+                attributes,
                 pat,
-                colon: input.parse()?,
+                colon,
                 ty: input.parse()?,
             }))
         } else {
@@ -197,6 +236,7 @@ impl Parse for SelfParam {
             None
         };
         Ok(Self {
+            attributes: Vec::new(),
             reference,
             mutability,
             self_token,
@@ -232,6 +272,7 @@ impl ToTokens for FnParam {
 
 impl ToTokens for SelfParam {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attributes.to_tokens(tokens);
         self.reference.to_tokens(tokens);
         self.mutability.to_tokens(tokens);
         self.self_token.to_tokens(tokens);
@@ -241,8 +282,20 @@ impl ToTokens for SelfParam {
 
 impl ToTokens for PatType {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attributes.to_tokens(tokens);
         self.pat.to_tokens(tokens);
         self.colon.to_tokens(tokens);
         self.ty.to_tokens(tokens);
+    }
+}
+
+impl ToTokens for VariadicParam {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attributes.to_tokens(tokens);
+        if let Some((pat, colon)) = &self.pat {
+            pat.to_tokens(tokens);
+            colon.to_tokens(tokens);
+        }
+        self.dots.to_tokens(tokens);
     }
 }

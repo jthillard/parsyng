@@ -1,25 +1,26 @@
 //! Patterns, e.g. the `pat` in `let pat = ...`, a function parameter, or a
 //! `match` arm.
 //!
-//! Coverage: binding (`ref mut name`), wildcard (`_`), tuple, reference
-//! (`&`/`&mut`), literal (any
+//! Coverage: binding (`ref mut name @ sub`), wildcard (`_`), tuple, slice
+//! (`[a, .., b]`), reference (`&`/`&mut`), literal (any
 //! [`ast::literal::Literal`](crate::ast::literal::Literal), optionally
-//! negated), path
-//! (`Foo::Bar`), qualified path (`<T as Trait>::CONST`), tuple-struct
-//! (`Foo(a, b)`), struct (`Foo { a, 0: b, c: pat, .. }`), macro invocation
-//! (`m!(x)`), rest (`..`), and `|` alternation. Not covered: slice
-//! patterns, range patterns (`1..=5`), and box patterns.
+//! negated), range (`1..=5`, `'a'..`, `..=MAX`), path (`Foo::Bar`,
+//! `<T as Trait>::CONST`), tuple-struct (`Foo::<T>(a, b)`), struct
+//! (`Foo { a, 0: b, c: pat, .. }`), macro invocation (`m!(x)`), rest
+//! (`..`), `|` alternation (with an optional leading `|`), and (nightly)
+//! inline `const { ... }` patterns. Not covered: (unstable) `box` patterns.
 
 use crate::ToTokens;
 
 use crate::{
     ast::{
-        delimiter::{Braced, Parenthesized},
+        delimiter::{Braced, Bracketed, Parenthesized},
+        expression::ConstBlockExpression,
         item::macro_item::MacroInvocationItem,
         literal::{Literal, LiteralNumber},
         path::SimplePath,
-        tokens::{And, At, Colon, Comma, DotDot, Minus, Mut, Or, Ref},
-        r#type::TypeQualifiedPath,
+        tokens::{And, At, Colon, Comma, DotDot, DotDotDot, DotDotEq, Minus, Mut, Or, Ref},
+        r#type::{TypePath, TypeQualifiedPath},
     },
     combinator::Punctuated,
     error::Diagnostics,
@@ -33,7 +34,7 @@ use crate::{
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub enum Pattern {
-    /// A binding pattern, e.g. `ref mut name`.
+    /// A binding pattern, e.g. `ref mut name` or `name @ Some(_)`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#identifier-patterns>
     Ident(PatIdent),
@@ -45,6 +46,10 @@ pub enum Pattern {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#tuple-patterns>
     Tuple(Box<PatTuple>),
+    /// A slice pattern: `[a, .., b]`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/patterns.html#slice-patterns>
+    Slice(Box<PatSlice>),
     /// A reference pattern: `&mut pat`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#reference-patterns>
@@ -53,16 +58,16 @@ pub enum Pattern {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#literal-patterns>
     Literal(PatLiteral),
-    /// A multi-segment path pattern, e.g. `Foo::Bar` (a unit enum variant or
-    /// constant). A single-segment path parses as [`Ident`](Self::Ident)
-    /// instead — see [`Pattern::parse`].
+    /// A range pattern, e.g. `1..=5`, `'a'..`, `..=MAX` or `A..B`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/patterns.html#range-patterns>
+    Range(Box<PatRange>),
+    /// A path pattern with more than a bare identifier, e.g. `Foo::Bar` (a
+    /// unit enum variant or constant) or `<T as Trait>::CONST`. A
+    /// single-segment path parses as [`Ident`](Self::Ident) instead.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#path-patterns>
     Path(PatPath),
-    /// A qualified path pattern, e.g. `<T as Trait>::CONST` or `<T>::CONST`.
-    ///
-    /// Reference: <https://doc.rust-lang.org/reference/patterns.html#path-patterns>
-    QualifiedPath(Box<TypeQualifiedPath>),
     /// A macro invocation in pattern position, e.g. `m!(x)`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
@@ -75,12 +80,14 @@ pub enum Pattern {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#struct-patterns>
     Struct(Box<PatStruct>),
-    /// The rest pattern `..`, e.g. inside `(a, .., b)`, `Path(a, ..)`, or
-    /// `Path { a, .. }`.
+    /// The rest pattern `..`, e.g. inside `(a, .., b)`, `[a, ..]` or
+    /// `Path(a, ..)`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#rest-patterns>
     Rest(PatRest),
-    /// `pat | pat | ...` (at least two alternatives).
+    /// An inline const pattern (nightly `inline_const_pat`): `const { N + 1 }`.
+    ConstBlock(Box<ConstBlockExpression>),
+    /// `pat | pat | ...`, or a single pattern after a leading `|`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#or-patterns>
     Or(Box<PatOr>),
@@ -111,6 +118,24 @@ fn parse_subpattern(input: &mut ParseBuffer) -> crate::error::Result<Option<(At,
     }
 }
 
+/// Whether a range pattern bound starts at `input`: a literal, a negated
+/// literal, a path (not a keyword such as a guard's `if`), or a qualified
+/// path.
+fn starts_range_bound(input: &ParseBuffer) -> bool {
+    if input.peek_literal().is_some() {
+        return true;
+    }
+    if let Some(('-' | '<' | ':', _)) = input.peek_punct_char() {
+        return true;
+    }
+    input.peek_ident_str().is_some()
+        && (input.peek_keyword().is_none()
+            || matches!(
+                input.peek_ident_str(),
+                Some("crate" | "self" | "Self" | "super")
+            ))
+}
+
 impl Pattern {
     /// The bound identifier, for [`Ident`](Self::Ident)/[`Wildcard`](Self::Wildcard)
     /// (recursing through [`Ref`](Self::Ref)); `None` for every other variant.
@@ -121,13 +146,15 @@ impl Pattern {
             Self::Wildcard(pat_wildcard) => Some(&pat_wildcard.underscore),
             Self::Ref(pat_ref) => pat_ref.pat.ident(),
             Self::Tuple(_)
+            | Self::Slice(_)
             | Self::Literal(_)
+            | Self::Range(_)
             | Self::Path(_)
-            | Self::QualifiedPath(_)
             | Self::Macro(_)
             | Self::TupleStruct(_)
             | Self::Struct(_)
             | Self::Rest(_)
+            | Self::ConstBlock(_)
             | Self::Or(_) => None,
         }
     }
@@ -140,13 +167,15 @@ impl Pattern {
             Self::Ref(pat_ref) => pat_ref.pat.mutability(),
             Self::Wildcard(_)
             | Self::Tuple(_)
+            | Self::Slice(_)
             | Self::Literal(_)
+            | Self::Range(_)
             | Self::Path(_)
-            | Self::QualifiedPath(_)
             | Self::Macro(_)
             | Self::TupleStruct(_)
             | Self::Struct(_)
             | Self::Rest(_)
+            | Self::ConstBlock(_)
             | Self::Or(_) => None,
         }
     }
@@ -162,38 +191,87 @@ impl Pattern {
         Self::parse_atom(input)
     }
 
+    /// If a range operator follows, the range pattern starting at `start`.
+    fn parse_range_rest(
+        input: &mut ParseBuffer,
+        start: Option<PatRangeBound>,
+    ) -> crate::error::Result<Option<Self>> {
+        let limits = if let Ok(dot_dot_eq) = input.try_parse() {
+            RangeLimits::Closed(dot_dot_eq)
+        } else if let Ok(dot_dot_dot) = input.try_parse() {
+            RangeLimits::Obsolete(dot_dot_dot)
+        } else if let Ok(dot_dot) = input.try_parse() {
+            RangeLimits::HalfOpen(dot_dot)
+        } else {
+            return Ok(None);
+        };
+        // `X..` has no end; `..=` and `...` always have one.
+        let end = if matches!(limits, RangeLimits::HalfOpen(_)) && !starts_range_bound(input) {
+            None
+        } else {
+            Some(input.parse()?)
+        };
+        Ok(Some(Self::Range(Box::new(PatRange { start, limits, end }))))
+    }
+
     /// Parse a single pattern, i.e. anything but the top-level `|`
     /// alternation handled by [`PatOr`]/[`Pattern::parse`] — used as the
     /// building block for alternatives and for nested sub-patterns (tuple
     /// elements, struct/tuple-struct fields, `&pat`) that don't themselves
     /// need another layer of alternation.
     fn parse_atom(input: &mut ParseBuffer) -> crate::error::Result<Self> {
-        if let Ok(rest) = input.try_parse() {
-            return Ok(Self::Rest(rest));
+        match input.peek_punct_char() {
+            // `..=X`/`..X` ranges, or a rest pattern.
+            Some(('.', _)) => {
+                let mut after = input.clone();
+                after.bump_token();
+                after.bump_token();
+                if (input.nth_punct_char(2).is_some_and(|(ch, _)| ch == '=')
+                    || starts_range_bound(&after))
+                    && let Some(range) = Self::parse_range_rest(input, None)?
+                {
+                    return Ok(range);
+                }
+                return Ok(Self::Rest(input.parse()?));
+            }
+            Some(('&', _)) => return Ok(Self::Ref(input.parse()?)),
+            _ => {}
         }
-        if let Ok(reference) = input.try_parse() {
-            return Ok(Self::Ref(reference));
+        match input.peek_delimiter() {
+            Some(Delimiter::Parenthesis) => return Ok(Self::Tuple(Box::new(input.parse()?))),
+            Some(Delimiter::Bracket) => return Ok(Self::Slice(Box::new(input.parse()?))),
+            _ => {}
         }
-        if let Ok(tuple) = input.try_parse() {
-            return Ok(Self::Tuple(Box::new(tuple)));
-        }
-        if let Ok(literal) = input.try_parse() {
+        if input.peek_literal().is_some()
+            || (input.peek_punct_char().is_some_and(|(ch, _)| ch == '-')
+                && input.nth_punct_char(1).is_none())
+        {
+            let literal: PatLiteral = input.parse()?;
+            if let Some(range) =
+                Self::parse_range_rest(input, Some(PatRangeBound::Literal(literal.clone())))?
+            {
+                return Ok(range);
+            }
             return Ok(Self::Literal(literal));
         }
-        if matches!(input.peek_ident_str(), Some("ref" | "mut")) {
-            return Ok(Self::Ident(input.parse()?));
-        }
-        if input.peek_punct_char().is_some_and(|(ch, _)| ch == '<') {
-            return Ok(Self::QualifiedPath(Box::new(
-                TypeQualifiedPath::parse_expression(input)?,
-            )));
+        match input.peek_ident_str() {
+            Some("ref" | "mut") => return Ok(Self::Ident(input.parse()?)),
+            Some("const") if input.nth_delimiter(1) == Some(Delimiter::Brace) => {
+                return Ok(Self::ConstBlock(Box::new(input.parse()?)));
+            }
+            _ => {}
         }
         let mut fork = input.clone();
-        let path: SimplePath = fork.parse()?;
-        if fork.peek_punct_char().is_some_and(|(ch, _)| ch == '!') {
+        if fork.parse::<SimplePath>().is_ok()
+            && fork.peek_punct_char().is_some_and(|(ch, _)| ch == '!')
+        {
             return MacroInvocationItem::parse_without_semicolon(input).map(Self::Macro);
         }
-        *input = fork;
+        let path: PatternPath = input.parse()?;
+        if let Some(range) = Self::parse_range_rest(input, Some(PatRangeBound::Path(path.clone())))?
+        {
+            return Ok(range);
+        }
         if let Some(group) = input.peek_group() {
             if group.delimiter() == Delimiter::Parenthesis {
                 return Ok(Self::TupleStruct(Box::new(PatTupleStruct {
@@ -226,6 +304,30 @@ impl Pattern {
     }
 }
 
+/// The path of a path, tuple-struct, struct or range pattern: `a::B::<T>`
+/// (generic arguments need the turbofish, as in expressions) or
+/// `<T as Trait>::C`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub enum PatternPath {
+    /// `a::B::<T>`.
+    Path(Box<TypePath>),
+    /// `<T as Trait>::C`.
+    Qualified(Box<TypeQualifiedPath>),
+}
+
+impl PatternPath {
+    /// This path's sole identifier, if it is a bare identifier.
+    const fn as_single_ident(&self) -> Option<&Ident> {
+        match self {
+            Self::Path(path) => path.as_single_ident(),
+            Self::Qualified(_) => None,
+        }
+    }
+}
+
 /// The wildcard pattern `_`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#wildcard-pattern>
@@ -242,6 +344,15 @@ pub struct PatWildcard {
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatTuple {
     elems: Parenthesized<Punctuated<Pattern, Comma>>,
+}
+
+/// A slice pattern, e.g. `[first, .., last]` or `[head, tail @ ..]`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/patterns.html#slice-patterns>
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub struct PatSlice {
+    elems: Bracketed<Punctuated<Pattern, Comma>>,
 }
 
 /// A reference pattern, e.g. `&mut pat`.
@@ -265,13 +376,47 @@ pub struct PatLiteral {
     literal: Literal,
 }
 
-/// A multi-segment path pattern, e.g. `Foo::Bar`.
+/// A range pattern: `start..=end`, `start..end`, `start..`, `..=end`,
+/// `..end` or the obsolete `start...end`.
+///
+/// Reference: <https://doc.rust-lang.org/reference/patterns.html#range-patterns>
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub struct PatRange {
+    start: Option<PatRangeBound>,
+    limits: RangeLimits,
+    end: Option<PatRangeBound>,
+}
+
+/// One bound of a [`PatRange`]: a (possibly negated) literal or a path.
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub enum PatRangeBound {
+    /// `-1`, `'a'`, `b'z'`, ...
+    Literal(PatLiteral),
+    /// `MAX`, `u8::MAX`, `<T as Trait>::MIN`, ...
+    Path(PatternPath),
+}
+
+/// The operator of a [`PatRange`].
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+pub enum RangeLimits {
+    /// `..` (exclusive, or open-ended without an end).
+    HalfOpen(DotDot),
+    /// `..=` (inclusive).
+    Closed(DotDotEq),
+    /// `...` (inclusive, obsolete).
+    Obsolete(DotDotDot),
+}
+
+/// A path pattern, e.g. `Foo::Bar` or `<T as Trait>::CONST`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#path-patterns>
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatPath {
-    path: SimplePath,
+    path: PatternPath,
 }
 
 /// A tuple-struct pattern: `Path(a, b, ..)`.
@@ -280,7 +425,7 @@ pub struct PatPath {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatTupleStruct {
-    path: SimplePath,
+    path: PatternPath,
     elems: Parenthesized<Punctuated<Pattern, Comma>>,
 }
 
@@ -290,7 +435,7 @@ pub struct PatTupleStruct {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatStruct {
-    path: SimplePath,
+    path: PatternPath,
     fields: Braced<Punctuated<StructPatternField, Comma>>,
 }
 
@@ -319,22 +464,63 @@ pub struct PatRest {
     dot_dot: DotDot,
 }
 
-/// `pat | pat | ...` (at least two alternatives).
+/// `pat | pat | ...`, with an optional leading `|` (which also allows a
+/// single alternative: `| pat`).
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#or-patterns>
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct PatOr {
+    leading_vert: Option<Or>,
     first: Pattern,
     alternatives: Vec<(Or, Pattern)>,
 }
 
 impl Parse for Pattern {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        if let Ok(or) = input.try_parse::<PatOr>() {
-            Ok(Self::Or(Box::new(or)))
+        // A single `|`, not a `||`.
+        let leading_vert = if input.peek_punct_char() == Some(('|', false)) {
+            Some(input.parse()?)
         } else {
-            Self::parse_atom(input)
+            None
+        };
+        let first = Self::parse_atom(input)?;
+        let mut alternatives = Vec::new();
+        while input.peek_punct_char() == Some(('|', false)) {
+            alternatives.push((input.parse()?, Self::parse_atom(input)?));
+        }
+        if leading_vert.is_none() && alternatives.is_empty() {
+            Ok(first)
+        } else {
+            Ok(Self::Or(Box::new(PatOr {
+                leading_vert,
+                first,
+                alternatives,
+            })))
+        }
+    }
+}
+
+impl Parse for PatternPath {
+    fn parse(input: &mut ParseBuffer) -> crate::error::Result<Self> {
+        if input.peek_punct_char().is_some_and(|(ch, _)| ch == '<') {
+            Ok(Self::Qualified(Box::new(
+                TypeQualifiedPath::parse_expression(input)?,
+            )))
+        } else {
+            Ok(Self::Path(Box::new(TypePath::parse_expression(input)?)))
+        }
+    }
+}
+
+impl Parse for PatRangeBound {
+    fn parse(input: &mut ParseBuffer) -> crate::error::Result<Self> {
+        if input.peek_literal().is_some()
+            || input.peek_punct_char().is_some_and(|(ch, _)| ch == '-')
+        {
+            Ok(Self::Literal(input.parse()?))
+        } else {
+            Ok(Self::Path(input.parse()?))
         }
     }
 }
@@ -368,12 +554,21 @@ impl Parse for PatTuple {
     }
 }
 
+impl Parse for PatSlice {
+    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        Ok(Self {
+            elems: input.parse()?,
+        })
+    }
+}
+
 impl Parse for PatRef {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
             and_token: input.parse()?,
             mutability: input.try_parse().ok(),
-            pat: Box::new(input.parse()?),
+            // `&` binds tighter than `|`: `|&x| x` is a closure.
+            pat: Box::new(Pattern::parse_atom(input)?),
         })
     }
 }
@@ -437,42 +632,32 @@ impl Parse for PatRest {
     }
 }
 
-impl Parse for PatOr {
-    fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        let first = Pattern::parse_atom(input)?;
-        let mut alternatives = Vec::new();
-        while let Ok(pipe) = input.try_parse::<Or>() {
-            alternatives.push((pipe, Pattern::parse_atom(input)?));
-        }
-        if alternatives.is_empty() {
-            Err(Diagnostics::new_error_spanned(
-                "Expected `|` after pattern",
-                input.span(),
-            ))
-        } else {
-            Ok(Self {
-                first,
-                alternatives,
-            })
-        }
-    }
-}
-
 impl ToTokens for Pattern {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         match self {
             Self::Ident(ident) => ident.to_tokens(tokens),
             Self::Wildcard(wildcard) => wildcard.to_tokens(tokens),
             Self::Tuple(tuple) => tuple.to_tokens(tokens),
+            Self::Slice(slice) => slice.to_tokens(tokens),
             Self::Ref(reference) => reference.to_tokens(tokens),
             Self::Literal(literal) => literal.to_tokens(tokens),
+            Self::Range(range) => range.to_tokens(tokens),
             Self::Path(path) => path.to_tokens(tokens),
-            Self::QualifiedPath(path) => path.to_tokens(tokens),
             Self::Macro(invocation) => invocation.to_tokens(tokens),
             Self::TupleStruct(tuple_struct) => tuple_struct.to_tokens(tokens),
             Self::Struct(r#struct) => r#struct.to_tokens(tokens),
             Self::Rest(rest) => rest.to_tokens(tokens),
+            Self::ConstBlock(block) => block.to_tokens(tokens),
             Self::Or(or) => or.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for PatternPath {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        match self {
+            Self::Path(path) => path.to_tokens(tokens),
+            Self::Qualified(path) => path.to_tokens(tokens),
         }
     }
 }
@@ -501,6 +686,12 @@ impl ToTokens for PatTuple {
     }
 }
 
+impl ToTokens for PatSlice {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.elems.to_tokens(tokens);
+    }
+}
+
 impl ToTokens for PatRef {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         self.and_token.to_tokens(tokens);
@@ -513,6 +704,33 @@ impl ToTokens for PatLiteral {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         self.neg.to_tokens(tokens);
         self.literal.to_tokens(tokens);
+    }
+}
+
+impl ToTokens for PatRange {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.start.to_tokens(tokens);
+        self.limits.to_tokens(tokens);
+        self.end.to_tokens(tokens);
+    }
+}
+
+impl ToTokens for PatRangeBound {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        match self {
+            Self::Literal(literal) => literal.to_tokens(tokens),
+            Self::Path(path) => path.to_tokens(tokens),
+        }
+    }
+}
+
+impl ToTokens for RangeLimits {
+    fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        match self {
+            Self::HalfOpen(dot_dot) => dot_dot.to_tokens(tokens),
+            Self::Closed(dot_dot_eq) => dot_dot_eq.to_tokens(tokens),
+            Self::Obsolete(dot_dot_dot) => dot_dot_dot.to_tokens(tokens),
+        }
     }
 }
 
@@ -563,6 +781,7 @@ impl ToTokens for PatRest {
 
 impl ToTokens for PatOr {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.leading_vert.to_tokens(tokens);
         self.first.to_tokens(tokens);
         for (pipe, pat) in &self.alternatives {
             pipe.to_tokens(tokens);
@@ -709,7 +928,7 @@ mod tests {
     #[test]
     fn test_pattern_paths() {
         let qualified = check::<Pattern>(quote! { <T as Trait>::CONST });
-        assert!(matches!(qualified, Pattern::QualifiedPath(_)));
+        assert!(matches!(qualified, Pattern::Path(_)));
         check::<Pattern>(quote! { <T>::CONST });
         check::<Pattern>(quote! { <Vec<u8> as Trait>::A::B });
         check::<Pattern>(quote! { Some(<T as Trait>::CONST) | None });
@@ -728,5 +947,75 @@ mod tests {
         // `@` binds tighter than `|`.
         let or = check::<Pattern>(quote! { x @ A | B });
         assert!(matches!(or, Pattern::Or(_)));
+    }
+
+    #[test]
+    fn test_pattern_slices() {
+        for tokens in [
+            quote! { [] },
+            quote! { [..] },
+            quote! { [a, .., b] },
+            quote! { [first, rest @ ..] },
+            quote! { [a, b,] },
+            quote! { &[a, ref b] },
+            quote! { [[a, b], [c, ..]] },
+        ] {
+            assert!(
+                matches!(
+                    check::<Pattern>(tokens.clone()),
+                    Pattern::Slice(_) | Pattern::Ref(_)
+                ),
+                "{tokens}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pattern_ranges() {
+        for tokens in [
+            quote! { 1..=5 },
+            quote! { 'a'..='z' },
+            quote! { b'a'..=b'z' },
+            quote! { -5..=-1 },
+            quote! { 1..5 },
+            quote! { 1.. },
+            quote! { ..=5 },
+            quote! { ..5 },
+            quote! { A..=B },
+            quote! { u8::MIN..=u8::MAX },
+            quote! { <T as Tr>::A..=<T as Tr>::B },
+            quote! { 0...9 },
+        ] {
+            let range = check::<Pattern>(tokens.clone());
+            assert!(matches!(range, Pattern::Range(_)), "{tokens}");
+        }
+        check::<Pattern>(quote! { x @ 1..=5 });
+        check::<Pattern>(quote! { Some(1..=5 | 10..) });
+        check::<Pattern>(quote! { [1.., x] });
+        check::<Pattern>(quote! { &(1..=2) });
+        // A half-open range ends before a guard or an arrow.
+        check::<crate::ast::expression::MatchExpression>(quote! {
+            match x { 1.. if y => {} 0.. => {} _ => {} }
+        });
+    }
+
+    #[test]
+    fn test_pattern_generic_paths() {
+        check::<Pattern>(quote! { Foo::<u8>(x) });
+        check::<Pattern>(quote! { Foo::<u8> { a } });
+        check::<Pattern>(quote! { a::B::<'a, T>::C });
+        check::<Pattern>(quote! { <Foo>::A(x) });
+        check::<Pattern>(quote! { <Foo as Tr>::A { b, .. } });
+    }
+
+    #[test]
+    fn test_pattern_leading_vert_and_const() {
+        let or = check::<Pattern>(quote! { | A | B });
+        assert!(matches!(or, Pattern::Or(_)));
+        let single = check::<Pattern>(quote! { | A });
+        assert!(matches!(single, Pattern::Or(_)));
+        check::<crate::ast::expression::MatchExpression>(quote! { match x { | A | B => () } });
+        let constant = check::<Pattern>(quote! { const { N + 1 } });
+        assert!(matches!(constant, Pattern::ConstBlock(_)));
     }
 }

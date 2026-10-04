@@ -27,6 +27,7 @@ use parsyng_quote_macros::quote;
 fn item_kind(tokens: TokenStream) -> &'static str {
     match check::<Item>(tokens) {
         Item::Struct(_) => "struct",
+        Item::Union(_) => "union",
         Item::Const(_) => "const",
         Item::TypeAlias(_) => "type",
         Item::Use(_) => "use",
@@ -49,6 +50,7 @@ fn item_dispatches_on_every_kind() {
     let cases = [
         (quote! { #[a] pub struct S { x: u8 } }, "struct"),
         (quote! { pub(crate) const C: u8 = 1; }, "const"),
+        (quote! { union U { a: u8, b: f32 } }, "union"),
         (quote! { type T<U> = Vec<U>; }, "type"),
         (quote! { pub use a::b; }, "use"),
         (quote! { extern crate alloc; }, "extern crate"),
@@ -325,4 +327,142 @@ fn item_nodes() {
     assert!(matches!(item_struct, crate::ast::item::Item::Struct(_)));
     let item_impl = check::<crate::ast::item::Item>(quote! { impl Type { type Assoc; } });
     assert!(matches!(item_impl, crate::ast::item::Item::Impl(_)));
+}
+
+#[test]
+fn bodies_are_parsed() {
+    use crate::ast::item::function::FunctionBody;
+
+    let function = check::<FunctionItem>(quote! {
+        fn f() {
+            #![allow(unused)]
+            let x = 1;
+            x + 1
+        }
+    });
+    let FunctionBody::Block(block) = function.body() else {
+        panic!("expected a body")
+    };
+    assert_eq!(block.inner_ref().inner_attributes().len(), 1);
+    assert_eq!(block.inner_ref().statements().len(), 2);
+
+    // Syntax errors inside bodies are now reported.
+    fails::<FunctionItem>(quote! { fn f() { a b } });
+    fails::<TraitItem>(quote! { trait T { fn f() { 1 + } } });
+    fails::<ModItem>(quote! { mod m { struct } });
+    fails::<ConstantItem>(quote! { const C: u8 = 1 +; });
+    fails::<StaticItem>(quote! { static S: u8 = ; });
+    fails::<ExternBlockItem>(quote! { extern "C" { fn f() {} } });
+
+    check::<ModItem>(quote! { mod m { #![allow(x)] mod n { fn f() { g() } } } });
+    check::<ModItem>(quote! { unsafe mod m {} });
+    check::<ConstantItem>(quote! { const C: u8 = { let x = 1; x + 1 }; });
+    check::<StaticItem>(quote! { static S: [u8; 2] = [0, 1]; });
+    check::<TraitItem>(
+        quote! { trait T { #![allow(x)] fn f(&self) -> u8 { self.g() + 1 } m!(); } },
+    );
+}
+
+#[test]
+fn extern_block_items() {
+    use crate::ast::item::extern_block::ExternItemKind;
+
+    let block = check::<ExternBlockItem>(quote! {
+        unsafe extern "C" {
+            #![allow(non_camel_case_types)]
+            /// Docs.
+            pub safe fn sqrt(x: f64) -> f64;
+            pub unsafe fn free(p: *mut u8);
+            fn printf(fmt: *const u8, ...) -> i32;
+            pub safe static VERSION: u32;
+            unsafe static mut ERRNO: i32;
+            static PLAIN: u8;
+            type Opaque;
+            m!();
+        }
+    });
+    let kinds: Vec<_> = block
+        .items()
+        .iter()
+        .map(|item| match item.kind() {
+            ExternItemKind::Function(..) => "fn",
+            ExternItemKind::Static(..) => "static",
+            ExternItemKind::Type(_) => "type",
+            ExternItemKind::Macro(_) => "macro",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "fn", "fn", "fn", "static", "static", "static", "type", "macro"
+        ]
+    );
+    assert_eq!(block.items()[0].attributes().len(), 1);
+    fails::<ExternBlockItem>(quote! { extern "C" { const C: u8; } });
+}
+
+#[test]
+fn impl_members_have_visibility() {
+    use crate::ast::item::impl_item::ImplItemKind;
+
+    type IsKind = fn(&ImplItemKind) -> bool;
+    let cases: [(TokenStream, IsKind); 5] = [
+        (quote! { pub const A: u8 = 1; }, |k| {
+            matches!(k, ImplItemKind::Const(_))
+        }),
+        (quote! { pub(crate) type B = u8; }, |k| {
+            matches!(k, ImplItemKind::Type(_))
+        }),
+        (quote! { #[inline] pub fn f() {} }, |k| {
+            matches!(k, ImplItemKind::Function(_))
+        }),
+        (quote! { pub default fn f() {} }, |k| {
+            matches!(k, ImplItemKind::Function(_))
+        }),
+        (quote! { m!(); }, |k| matches!(k, ImplItemKind::Macro(_))),
+    ];
+    for (tokens, is_expected) in cases {
+        let source = tokens.to_string();
+        let item = check::<ImplItem>(tokens);
+        assert!(is_expected(item.kind()), "{source}");
+    }
+    let item = check::<ImplItem>(quote! { #[a] pub const A: u8 = 1; });
+    assert!(matches!(
+        item.visibility(),
+        crate::ast::visibility::Visibility::Public(_)
+    ));
+    assert_eq!(item.attributes().len(), 1);
+    // `default` is only a keyword before an item.
+    check::<ImplItem>(quote! { fn default() -> Self { Self } });
+    check::<ImplItem>(quote! { default!(); });
+    check::<Implementation>(quote! { impl S { #![allow(x)] pub const A: u8 = 1; } });
+}
+
+#[test]
+fn unions() {
+    check::<Item>(quote! { union U { a: u8 } });
+    check::<Item>(quote! { pub union U<'a, T: Copy> where T: 'a { a: &'a T, b: f32, } });
+    // `union` is a weak keyword.
+    check::<Item>(quote! { fn union() {} });
+    check::<Item>(quote! { union!(); });
+}
+
+#[test]
+fn nightly_const_syntax() {
+    check::<Implementation>(quote! { impl const Default for S { fn default() -> Self { S } } });
+    check::<Implementation>(quote! { impl<T: ~const Clone> const Clone for W<T> {} });
+    check::<Implementation>(quote! { impl<T> const !Trait for T {} });
+    check::<TraitItem>(quote! { const trait T {} });
+    check::<TraitItem>(quote! { const unsafe trait T: [const] Super {} });
+    check::<Item>(quote! { const trait T {} });
+    check::<Item>(quote! { #[const_trait] pub trait T { fn f(&self); } });
+    check::<FunctionItem>(quote! { const fn f<T: [const] Destruct>(x: T) {} });
+    check::<FunctionItem>(quote! { const fn f() -> impl ~const Fn() { const || {} } });
+    check::<FunctionItem>(quote! { fn f() { let c = const move |x: u8| x; } });
+    check::<FunctionItem>(quote! { fn f() { match x { const { 1 + 1 } => {} _ => {} } } });
+    check::<FunctionItem>(quote! { fn f<const N: usize>() where [(); N + 1]: {} });
+    check::<FunctionItem>(quote! { fn f<const N: usize>() -> [u8; { N * 2 }] { [0; N * 2] } });
+    check::<ConstantItem>(quote! { const C<T: Default>: usize = 1 where T: Clone; });
+    check::<ConstantItem>(quote! { const C<'a, const N: usize>: &'a [u8; N] = &[0; N]; });
+    check::<Struct>(quote! { struct S<const B: &'static str>; });
 }
