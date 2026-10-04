@@ -201,3 +201,65 @@ impl ToTokens for Diagnostics {
         });
     }
 }
+
+#[cfg(all(test, feature = "fallback"))]
+mod tests {
+    use super::{Diagnostic, Diagnostics};
+    use crate::ToTokens;
+    use crate::proc_macro::Span;
+
+    fn messages(diagnostics: &Diagnostics) -> Vec<String> {
+        diagnostics.iter().map(|d| d.content.to_string()).collect()
+    }
+
+    #[test]
+    fn messages_keep_their_order() {
+        let mut diagnostics = Diagnostics::empty();
+        assert_eq!(messages(&diagnostics), Vec::<String>::new());
+        assert!(diagnostics.to_token_stream().is_empty());
+
+        diagnostics.append(Diagnostic::new("first", Span::call_site()));
+        diagnostics.append(Diagnostic::new(String::from("second"), Span::call_site()));
+        let mut other = Diagnostics::new_error("third");
+        other.append(Diagnostic::new(String::from("fourth"), Span::call_site()));
+        diagnostics.join(other);
+        diagnostics.join(Diagnostics::empty());
+        assert_eq!(
+            messages(&diagnostics),
+            ["first", "second", "third", "fourth"]
+        );
+
+        // Joining into an empty error keeps everything too.
+        let mut empty = Diagnostics::empty();
+        empty.join(diagnostics);
+        assert_eq!(messages(&empty), ["first", "second", "third", "fourth"]);
+    }
+
+    #[test]
+    fn diagnostics_print_as_compile_errors() {
+        let mut diagnostics = Diagnostics::new_error_spanned("static", Span::call_site());
+        diagnostics.append(Diagnostic::new(format!("owned {}", 1), Span::call_site()));
+        assert_eq!(
+            diagnostics.to_token_stream().to_string(),
+            r#"compile_error ! { "static" } compile_error ! { "owned 1" }"#
+        );
+    }
+
+    #[cfg(feature = "parsing")]
+    #[test]
+    fn expected_token_messages() {
+        let one = Diagnostics::expected_token(&[';'], Span::call_site());
+        assert_eq!(messages(&one), ["Expected token `;`"]);
+        let three = Diagnostics::expected_token(&['.', '.', '='], Span::call_site());
+        assert_eq!(messages(&three), ["Expected token `..=`"]);
+    }
+
+    #[test]
+    fn messages_escape_quotes() {
+        let diagnostics = Diagnostics::new_error("say \"hi\"");
+        assert_eq!(
+            diagnostics.to_token_stream().to_string(),
+            r#"compile_error ! { "say \"hi\"" }"#
+        );
+    }
+}

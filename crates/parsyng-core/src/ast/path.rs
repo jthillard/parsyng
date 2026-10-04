@@ -9,8 +9,8 @@ use crate::combinator::Either;
 use crate::proc_macro::Delimiter;
 use crate::{
     ast::{
-        item::Lifetime,
-        tokens::{Comma, Gt, Lt, PathSep},
+        item::{Lifetime, TypeParamBounds},
+        tokens::{Colon, Comma, Gt, Lt, PathSep},
         r#type::Type,
     },
     combinator::{Punctuated, StopOnError},
@@ -198,6 +198,12 @@ pub enum GenericArg {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/items/associated-items.html#associated-types>
     Bindings(Ident, Option<Box<GenericArgs>>, Eq, Box<Type>),
+    /// An associated-type bound, e.g. `Item: Clone` in
+    /// `Iterator<Item: Clone>` (the optional nested [`GenericArgs`] covers a
+    /// generic associated type, e.g. `Item<'a>: Clone`).
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/paths.html#paths-in-expressions>
+    Constraint(Ident, Option<Box<GenericArgs>>, Colon, TypeParamBounds),
     /// A const argument: a `{ ... }` block, a literal, or a negated
     /// literal, e.g. `{ N + 1 }` in `f::<{ N + 1 }>()`. A bare `N` parses
     /// as a [`Type`](Self::Type) argument, since the two can't be told
@@ -303,16 +309,48 @@ impl ToTokens for GenericArg {
             Self::Type(ty) => ty.to_tokens(tokens),
             Self::Lifetime(lifetime) => lifetime.to_tokens(tokens),
             Self::Bindings(ident, generics, eq, ty) => (ident, generics, eq, ty).to_tokens(tokens),
+            Self::Constraint(ident, generics, colon, bounds) => {
+                (ident, generics, colon, bounds).to_tokens(tokens);
+            }
             Self::Const(arg) => arg.to_tokens(tokens),
         }
     }
 }
 
-/// Whether the `Name<..>` at the cursor is followed by `=`, making it an
-/// associated-type binding (`Item<'a> = T`) rather than a type: a token
-/// scan, so that `Option<Box<..>>` isn't parsed once as a failed binding
-/// then again as a type at every nesting level.
-fn is_generic_binding(input: &ParseBuffer) -> bool {
+/// What follows a `Name` at the cursor in generic arguments.
+#[derive(PartialEq, Eq)]
+enum AfterName {
+    /// `=`: an associated-type binding (`Item = T`).
+    Eq,
+    /// `:` (not `::`): an associated-type bound (`Item: Clone`).
+    Colon,
+    /// Anything else: a type or a const argument.
+    Other,
+}
+
+/// Classify the `=`/`:` (if any) at the cursor.
+fn after_name(input: &ParseBuffer, n: u32) -> AfterName {
+    match input.nth_punct_char(n) {
+        // Not `==`.
+        Some(('=', false)) => AfterName::Eq,
+        Some(('=', true)) if input.nth_punct_char(n + 1).is_none_or(|(ch, _)| ch != '=') => {
+            AfterName::Eq
+        }
+        // Not `::`.
+        Some((':', false)) => AfterName::Colon,
+        Some((':', true)) if input.nth_punct_char(n + 1).is_none_or(|(ch, _)| ch != ':') => {
+            AfterName::Colon
+        }
+        _ => AfterName::Other,
+    }
+}
+
+/// Whether the `Name<..>` at the cursor is followed by `=` or `:`, making
+/// it an associated-type binding (`Item<'a> = T`) or bound (`Item<'a>:
+/// Clone`) rather than a type: a token scan, so that `Option<Box<..>>`
+/// isn't parsed once as a failed binding then again as a type at every
+/// nesting level.
+fn generic_name_followed_by(input: &ParseBuffer) -> AfterName {
     let mut cursor = input.clone();
     cursor.bump_token();
     let mut depth = 0u32;
@@ -322,20 +360,18 @@ fn is_generic_binding(input: &ParseBuffer) -> bool {
     loop {
         let punct = cursor.peek_punct_char();
         if !cursor.bump_token() {
-            return false;
+            return AfterName::Other;
         }
         match punct {
             Some(('<', _)) => depth += 1,
             Some(('>', _)) if !after_minus => {
                 depth -= 1;
                 if depth == 0 {
-                    return cursor.peek_punct_char().is_some_and(|(ch, _)| ch == '=')
-                        && cursor.nth_punct_char(1) != Some(('=', false))
-                        && cursor.nth_punct_char(1) != Some(('=', true));
+                    return after_name(&cursor, 0);
                 }
             }
             // A `;` or a block can't be inside generic arguments.
-            Some((';', _)) => return false,
+            Some((';', _)) => return AfterName::Other,
             _ => {}
         }
         after_minus = punct == Some(('-', true));
@@ -344,18 +380,30 @@ fn is_generic_binding(input: &ParseBuffer) -> bool {
 
 impl Parse for GenericArg {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        // `Name = Type` and `Name<..> = Type` bindings.
-        let may_be_binding = input.peek_ident_str().is_some()
-            && match input.nth_punct_char(1) {
-                Some(('=', joint)) => !joint,
-                Some(('<', _)) => is_generic_binding(input),
-                _ => false,
-            };
-        if may_be_binding
+        // `Name = Type`/`Name<..> = Type` bindings and `Name: Bounds`/
+        // `Name<..>: Bounds` constraints.
+        let after = if input.peek_ident_str().is_none() {
+            AfterName::Other
+        } else if input.nth_punct_char(1).is_some_and(|(ch, _)| ch == '<') {
+            generic_name_followed_by(input)
+        } else {
+            after_name(input, 1)
+        };
+        if after == AfterName::Eq
             && let Ok((ident, generics, eq, ty)) =
                 input.try_parse::<(_, Option<Peekable<_>>, _, _)>()
         {
             Ok(Self::Bindings(ident, generics.map(Peekable::inner), eq, ty))
+        } else if after == AfterName::Colon
+            && let Ok((ident, generics, colon, bounds)) =
+                input.try_parse::<(_, Option<Peekable<_>>, _, _)>()
+        {
+            Ok(Self::Constraint(
+                ident,
+                generics.map(Peekable::inner),
+                colon,
+                bounds,
+            ))
         } else if input.peek_punct_char().is_some_and(|(ch, _)| ch == '\'')
             && let Ok(lifetime) = input.try_parse()
         {

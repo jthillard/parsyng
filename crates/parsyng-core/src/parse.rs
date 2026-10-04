@@ -665,18 +665,17 @@ impl<T: Parse> Parse for Box<T> {
 /// Used as the default filler for the unused type parameters of
 /// [`combinator::Either`](crate::combinator::Either), so that an `Either`
 /// declared with fewer than five alternatives still type-checks without
-/// ever being able to actually produce the unused variants.
+/// ever being able to actually produce the unused variants. Its error has
+/// no message, so that it adds nothing to the errors `Either` collects from
+/// its real alternatives.
 #[derive(Clone, Default)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Invalid;
 
 impl Parse for Invalid {
     #[inline]
-    fn parse(input: &mut ParseBuffer) -> Result<Self> {
-        Err(Diagnostics::new_error_spanned(
-            "Invalid cannot be parsed",
-            input.span(),
-        ))
+    fn parse(_input: &mut ParseBuffer) -> Result<Self> {
+        Err(Diagnostics::empty())
     }
 }
 
@@ -684,5 +683,210 @@ impl ToTokens for Invalid {
     #[inline]
     fn to_tokens(&self, _tokens: &mut TokenStream) {
         unimplemented!("`Invalid` can not be converted to tokens")
+    }
+}
+
+#[cfg(all(test, feature = "fallback"))]
+mod tests {
+    use super::{ParseBuffer, Peekable, parse_all};
+    use crate as parsyng;
+    use crate::ast::tokens::{
+        Comma, Fn as FnKeyword, PathSep, RArrow, StructKeyword, keyword_index,
+    };
+    use crate::proc_macro::{Delimiter, Ident, TokenStream};
+    use parsyng_quote_macros::quote;
+
+    fn buffer(source: &str) -> ParseBuffer {
+        ParseBuffer::new(source.parse().unwrap())
+    }
+
+    fn rest(input: &ParseBuffer) -> String {
+        input.clone().collect::<TokenStream>().to_string()
+    }
+
+    #[test]
+    fn peeking_does_not_consume() {
+        let input = buffer("ident 'x' + (group)");
+        assert_eq!(input.peek_ident_str(), Some("ident"));
+        assert!(input.peek_ident().is_some());
+        assert!(input.peek_punct().is_none());
+        assert_eq!(input.nth_ident_str(0), Some("ident"));
+        assert_eq!(input.nth_ident_str(1), None);
+        assert_eq!(input.nth_punct_char(2), Some(('+', false)));
+        assert_eq!(input.nth_delimiter(3), Some(Delimiter::Parenthesis));
+        // Flattened: the group's contents follow it.
+        assert_eq!(input.nth_ident_str(4), Some("group"));
+        assert_eq!(input.nth_ident_str(100), None);
+        assert_eq!(rest(&input), "ident 'x' + (group)");
+
+        let mut input = input;
+        assert!(input.bump_token());
+        assert_eq!(input.peek_literal_str(), Some("'x'"));
+        assert!(input.peek_literal().is_some());
+        assert!(input.peek_group().is_none());
+    }
+
+    #[test]
+    fn keywords() {
+        let mut input = buffer("struct r#struct fun fn");
+        assert_eq!(input.peek_keyword(), Some(keyword_index("struct")));
+        assert!(input.keyword(keyword_index("fn")).is_none());
+        assert!(input.keyword(keyword_index("struct")).is_some());
+        // Raw identifiers are never keywords.
+        assert_eq!(input.peek_ident_str(), Some("r#struct"));
+        assert_eq!(input.peek_keyword(), None);
+        assert!(input.ident().is_some());
+        assert_eq!(input.peek_keyword(), None);
+        assert!(input.ident_str_and(|text| text == "fun").is_some());
+        assert!(input.parse::<FnKeyword>().is_ok());
+        assert!(input.is_empty());
+        assert!(input.parse::<StructKeyword>().is_err());
+    }
+
+    #[test]
+    fn punctuation_spacing() {
+        let input = buffer("-> - > :: : :");
+        assert_eq!(input.nth_punct_char(0), Some(('-', true)));
+        assert_eq!(input.nth_punct_char(1), Some(('>', false)));
+        assert_eq!(input.nth_punct_char(2), Some(('-', false)));
+
+        let mut input = input;
+        assert!(input.parse::<RArrow>().is_ok());
+        assert!(input.try_parse::<RArrow>().is_err());
+        assert_eq!(rest(&input), "- > :: : :");
+        assert!(
+            input
+                .punct_char_and(|ch, joint| ch == '-' && !joint)
+                .is_some()
+        );
+        assert!(input.punct_and(|punct| punct.as_char() == '>').is_some());
+        assert!(input.parse::<PathSep>().is_ok());
+        assert!(input.try_parse::<PathSep>().is_err());
+        assert!(input.punct().is_some());
+        assert!(input.punct().is_some());
+        assert!(input.punct().is_none());
+    }
+
+    #[test]
+    fn consuming_wrong_kinds_returns_none() {
+        let mut input = buffer("a");
+        assert!(input.group().is_none());
+        assert!(input.literal().is_none());
+        assert!(input.punct().is_none());
+        assert!(input.literal_with_str().is_none());
+        assert!(input.ident_and(|ident| ident.to_string() == "b").is_none());
+        assert!(input.ident_str_and(|text| text == "b").is_none());
+        assert_eq!(rest(&input), "a");
+
+        let mut input = buffer("1u8");
+        let (_, text) = input.literal_with_str().unwrap();
+        assert_eq!(text, "1u8");
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn groups_and_sub_buffers() {
+        let mut input = buffer("(a b) [c] {d} e");
+        let (group, mut contents) = input.group_contents().unwrap();
+        assert_eq!(group.delimiter(), Delimiter::Parenthesis);
+        assert_eq!(rest(&contents), "a b");
+        assert!(contents.ident().is_some());
+        assert!(contents.ident().is_some());
+        // The sub-buffer ends at the group's end.
+        assert!(contents.is_empty());
+        assert!(contents.ident().is_none());
+
+        // `delimited` only accepts the requested delimiter.
+        assert!(input.delimited(Delimiter::Brace).is_none());
+        assert_eq!(rest(&input), "[c] { d } e");
+        let (_, contents) = input.delimited(Delimiter::Bracket).unwrap();
+        assert_eq!(rest(&contents), "c");
+        assert!(input.group().is_some());
+        assert_eq!(rest(&input), "e");
+        assert!(input.group_contents().is_none());
+        assert!(input.delimited(Delimiter::Brace).is_none());
+    }
+
+    #[test]
+    fn nested_groups_are_skipped_whole() {
+        let mut input = buffer("((a, b), [c]) d");
+        assert!(input.bump_token());
+        assert_eq!(input.peek_ident_str(), Some("d"));
+        assert!(input.bump_token());
+        assert!(!input.bump_token());
+    }
+
+    #[test]
+    fn none_delimited_groups() {
+        let group = crate::proc_macro::Group::new(Delimiter::None, quote! { a + b });
+        let stream: TokenStream = crate::proc_macro::TokenTree::from(group).into();
+        let mut input = ParseBuffer::new(stream);
+        assert_eq!(input.peek_delimiter(), Some(Delimiter::None));
+        let (_, contents) = input.delimited(Delimiter::None).unwrap();
+        assert_eq!(rest(&contents), "a + b");
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn try_parse_and_try_advance_rewind_on_failure() {
+        let mut input = buffer("a , b");
+        assert!(input.try_parse::<(Ident, Ident)>().is_err());
+        assert_eq!(rest(&input), "a , b");
+        assert!(input.try_parse::<(Ident, Comma)>().is_ok());
+        assert_eq!(rest(&input), "b");
+
+        let mut input = buffer("a b c");
+        let result = input.try_advance(|input| {
+            input.ident();
+            input.ident();
+            input.parse::<Comma>()
+        });
+        assert!(result.is_err());
+        assert_eq!(rest(&input), "a b c");
+        let result = input.try_advance(|input| {
+            *input = input.clone();
+            Ok(input.ident())
+        });
+        assert!(result.unwrap().is_some());
+        assert_eq!(rest(&input), "b c");
+    }
+
+    #[test]
+    fn peekable_never_consumes_on_failure() {
+        let mut input = buffer("a , b");
+        assert!(input.parse::<Peekable<(Ident, Ident)>>().is_err());
+        assert_eq!(rest(&input), "a , b");
+        let pair = input.parse::<Peekable<(Ident, Comma)>>().unwrap().inner();
+        assert_eq!(pair.0.to_string(), "a");
+    }
+
+    #[test]
+    fn parse_all_rejects_leftovers() {
+        assert!(parse_all::<Ident>(quote! { a }).is_ok());
+        assert!(parse_all::<Ident>(quote! { a b }).is_err());
+        assert!(parse_all::<Ident>(quote! {}).is_err());
+        assert!(parse_all::<()>(quote! {}).is_ok());
+        assert!(parse_all::<()>(quote! { a }).is_err());
+    }
+
+    #[test]
+    fn empty_buffers() {
+        let mut input = ParseBuffer::new(TokenStream::new());
+        assert!(input.is_empty());
+        assert!(input.peek().is_none());
+        assert!(input.peek_keyword().is_none());
+        assert!(!input.bump_token());
+        assert!(input.next().is_none());
+        // The span of an empty buffer is still available.
+        let _ = input.span();
+    }
+
+    #[test]
+    fn buffer_iterates_and_prints_top_level_tokens() {
+        let input = buffer("a (b c) d");
+        assert_eq!(input.clone().count(), 3);
+        let mut out = TokenStream::new();
+        crate::ToTokens::to_tokens(&input, &mut out);
+        assert_eq!(out.to_string(), "a (b c) d");
     }
 }

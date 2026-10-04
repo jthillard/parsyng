@@ -474,7 +474,7 @@ impl Parse for Type {
         let mut fork = input.clone();
         let path = fork.parse()?;
         if fork.peek_punct_char().is_some_and(|(ch, _)| ch == '!') {
-            return input.parse().map(Self::MacroInvocation);
+            return MacroInvocationItem::parse_without_semicolon(input).map(Self::MacroInvocation);
         }
         *input = fork;
         Ok(Self::Path(path))

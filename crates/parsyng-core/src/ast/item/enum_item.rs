@@ -7,7 +7,7 @@ use crate::{
     ast::{
         attributes::{Attribute, parse_outer_attributes},
         delimiter::{Braced, Parenthesized},
-        item::{GenericParams, WhereClause},
+        item::{GenericParams, WhereClause, r#struct::TupleField},
         token_stream::TokenStreamUntilComma,
         tokens::{Colon, Comma, Enum, Eq},
         r#type::Type,
@@ -53,8 +53,8 @@ pub struct EnumVariant {
 pub enum EnumVariantFields {
     /// `{ a: A, b: B }`.
     Named(Braced<Punctuated<EnumField, Comma>>),
-    /// `(A, B)`.
-    Unnamed(Parenthesized<Punctuated<Type, Comma>>),
+    /// `(A, #[attr] B)`.
+    Unnamed(Parenthesized<Punctuated<TupleField, Comma>>),
     /// No fields.
     Unit,
 }

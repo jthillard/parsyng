@@ -150,6 +150,7 @@ pub enum Item {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct ConstParam {
+    attributes: Vec<Attribute>,
     const_token: Const,
     /// This parameter's name.
     pub ident: Ident,
@@ -254,6 +255,7 @@ impl DeriveInput {
 impl Parse for ConstParam {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
+            attributes: parse_outer_attributes(input),
             const_token: input.parse()?,
             ident: input.parse()?,
             colon: input.parse()?,
@@ -295,8 +297,14 @@ impl<T> DerefMut for VisItem<T> {
 }
 
 impl ConstParam {
+    /// This parameter's outer attributes, e.g. `#[cfg(x)]`.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
     /// Everything but the default, as written in an `impl<...>` header.
     fn to_tokens_without_default(&self, tokens: &mut TokenStream) {
+        self.attributes.to_tokens(tokens);
         self.const_token.to_tokens(tokens);
         self.ident.to_tokens(tokens);
         self.colon.to_tokens(tokens);
@@ -653,6 +661,7 @@ pub enum GenericParam {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct TypeParam {
+    attributes: Vec<Attribute>,
     /// This parameter's name.
     pub ident: Ident,
     colon: Option<Colon>,
@@ -695,8 +704,12 @@ impl TypeParamBounds {
     /// Append one more bound, separated from the previous one by a `+`
     /// spanned at `bound`'s own span.
     pub fn push(&mut self, bound: TypeParamBound) {
-        let separator = Plus::new(bound.span());
-        self.bounds.push((bound, separator));
+        if self.bounds.is_empty() {
+            self.bounds = Punctuated::one(bound);
+        } else {
+            let separator = Plus::new(bound.span());
+            self.bounds.push((bound, separator));
+        }
     }
 }
 
@@ -729,6 +742,7 @@ impl TypeParamBound {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LifetimeParam {
+    attributes: Vec<Attribute>,
     lifetime: Lifetime,
     bounds: Option<(Colon, LifetimeBounds)>,
 }
@@ -881,6 +895,7 @@ impl ToTokens for Lifetime {
 
 impl Parse for TypeParam {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let attributes = parse_outer_attributes(input);
         let ident = input.parse()?;
 
         let (colon, bounds) = if let Ok(colon) = input.peek_parse() {
@@ -896,6 +911,7 @@ impl Parse for TypeParam {
         };
 
         Ok(Self {
+            attributes,
             ident,
             colon,
             bounds,
@@ -1003,8 +1019,14 @@ impl ToTokens for TraitBound {
 }
 
 impl TypeParam {
+    /// This parameter's outer attributes, e.g. `#[cfg(x)]`.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
     /// Everything but the default, as written in an `impl<...>` header.
     fn to_tokens_without_default(&self, tokens: &mut TokenStream) {
+        self.attributes.to_tokens(tokens);
         self.ident.to_tokens(tokens);
         match &self.colon {
             Some(colon) => colon.to_tokens(tokens),
@@ -1022,8 +1044,22 @@ impl ToTokens for TypeParam {
         self.default.to_tokens(tokens);
     }
 }
+impl LifetimeParam {
+    /// This parameter's outer attributes, e.g. `#[cfg(x)]`.
+    #[must_use]
+    pub fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+    /// The lifetime being declared, without its bounds.
+    #[must_use]
+    pub const fn lifetime(&self) -> &Lifetime {
+        &self.lifetime
+    }
+}
+
 impl ToTokens for LifetimeParam {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.attributes.to_tokens(tokens);
         self.lifetime.to_tokens(tokens);
         self.bounds.to_tokens(tokens);
     }
@@ -1062,6 +1098,7 @@ impl Parse for GenericParam {
 }
 impl Parse for LifetimeParam {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let attributes = parse_outer_attributes(input);
         let lifetime = input.parse()?;
 
         let bounds = if let Ok(colon) = input.peek_parse() {
@@ -1069,7 +1106,11 @@ impl Parse for LifetimeParam {
         } else {
             None
         };
-        Ok(Self { lifetime, bounds })
+        Ok(Self {
+            attributes,
+            lifetime,
+            bounds,
+        })
     }
 }
 

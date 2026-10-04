@@ -22,8 +22,11 @@
 //!
 //! - [`pattern::Pattern`] does not cover slice patterns (`[a, .., b]`),
 //!   range patterns (`1..=5`, `'a'..='z'`) or `box` patterns.
-//! - Unstable syntax (`try`/`yeet` blocks, `box` expressions, ...) is not
-//!   parsed.
+//! - Keywords are accepted wherever an identifier is expected (e.g.
+//!   `struct fn;` parses), except as the first segment of a macro
+//!   invocation's path.
+//! - Unstable syntax (`try`/`yeet` blocks, `box` expressions, `macro`
+//!   items with a separate argument list, ...) is not parsed.
 //!
 //! Unsupported syntax is reported as a regular [`Parse`](crate::parse::Parse)
 //! error spanned at the offending token; it never panics.

@@ -20,6 +20,7 @@ use crate::{
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct UseItem {
     use_token: Use,
+    leading_colon: Option<PathSep>,
     tree: UseTree,
     semi: Semicolon,
 }
@@ -83,6 +84,7 @@ impl Parse for UseItem {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
         Ok(Self {
             use_token: input.parse()?,
+            leading_colon: crate::ast::path::parse_leading_path_sep(input),
             tree: input.parse()?,
             semi: input.parse()?,
         })
@@ -128,6 +130,7 @@ impl Parse for UseTree {
 impl ToTokens for UseItem {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
         self.use_token.to_tokens(tokens);
+        self.leading_colon.to_tokens(tokens);
         self.tree.to_tokens(tokens);
         self.semi.to_tokens(tokens);
     }

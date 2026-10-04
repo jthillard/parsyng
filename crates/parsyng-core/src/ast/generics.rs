@@ -77,7 +77,9 @@ impl ToTokens for TypeGenerics<'_> {
         self.0.generics.iter().for_each(|generic| {
             match generic {
                 GenericParam::Type(type_param) => type_param.ident.to_tokens(tokens),
-                GenericParam::Lifetime(lifetime_param) => lifetime_param.to_tokens(tokens),
+                GenericParam::Lifetime(lifetime_param) => {
+                    lifetime_param.lifetime().to_tokens(tokens);
+                }
                 GenericParam::Const(const_param) => const_param.ident.to_tokens(tokens),
             }
             Comma::new(Span::call_site()).to_tokens(tokens);

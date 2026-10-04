@@ -233,10 +233,17 @@ impl<T, P, OnError> Punctuated<T, P, OnError> {
     pub const fn len(&self) -> usize {
         self.content.len() + if self.last.is_some() { 1 } else { 0 }
     }
-    /// Append an `(element, separator)` pair to the end of the list, after
-    /// any existing trailing element.
-    pub fn push(&mut self, pair: (T, P)) {
-        self.content.push(pair);
+    /// Append an `(element, separator)` pair to the end of the list. If the
+    /// list ends with an element without a separator, the separator goes
+    /// between that element and the new one instead, so the order of the
+    /// elements is kept and the list still has no trailing separator.
+    pub fn push(&mut self, (elem, separator): (T, P)) {
+        if let Some(last) = self.last.take() {
+            self.content.push((last, separator));
+            self.last = Some(elem);
+        } else {
+            self.content.push((elem, separator));
+        }
     }
     /// Prepend an `(element, separator)` pair to the front of the list.
     pub fn push_back(&mut self, pair: (T, P)) {
@@ -477,5 +484,202 @@ impl<A: ToTokens, B: ToTokens, C: ToTokens, D: ToTokens, E: ToTokens> ToTokens
             Self::Fourth(fourth) => fourth.to_tokens(tokens),
             Self::Fifth(fifth) => fifth.to_tokens(tokens),
         }
+    }
+}
+
+#[cfg(all(test, feature = "fallback"))]
+mod tests {
+    use super::{Cons, Either, Greedy, GreedyVec, Punctuated, StopOnError};
+    use crate as parsyng;
+    use crate::ToTokens;
+    use crate::ast::tokens::{Comma, Semicolon};
+    use crate::parse::{ParseBuffer, parse_all};
+    use crate::proc_macro::{Ident, Literal, Punct, Span, TokenStream};
+    use parsyng_quote_macros::quote;
+
+    fn rest(input: &ParseBuffer) -> String {
+        input.clone().collect::<TokenStream>().to_string()
+    }
+
+    fn ident(name: &str) -> Ident {
+        Ident::new(name, Span::call_site())
+    }
+
+    fn comma() -> Comma {
+        Comma::new(Span::call_site())
+    }
+
+    fn round_trip<T: crate::Parse + ToTokens>(tokens: TokenStream) -> T {
+        let expected = tokens.to_string();
+        let value = parse_all::<T>(tokens).unwrap_or_else(|_| panic!("`{expected}` failed"));
+        assert_eq!(value.to_token_stream().to_string(), expected);
+        value
+    }
+
+    #[test]
+    fn cons_and_tuples_parse_in_sequence() {
+        let cons = round_trip::<Cons<Ident, Comma, Ident>>(quote! { a, b });
+        assert_eq!(cons.first.to_string(), "a");
+        assert_eq!(cons.third.to_string(), "b");
+        round_trip::<Cons<Ident, Comma, Ident, Comma, Ident>>(quote! { a, b, c });
+        round_trip::<(Ident, Comma)>(quote! { a, });
+        round_trip::<(Ident, Comma, Ident)>(quote! { a, b });
+        round_trip::<(Ident, Comma, Ident, Semicolon)>(quote! { a, b; });
+
+        let mut input = ParseBuffer::new(quote! { a ; });
+        assert!(input.try_parse::<Cons<Ident, Comma>>().is_err());
+        assert_eq!(rest(&input), "a ;");
+    }
+
+    #[test]
+    fn option_needs_peek_and_never_consumes_on_miss() {
+        let mut input = ParseBuffer::new(quote! { ; , });
+        assert!(input.parse::<Option<Comma>>().unwrap().is_none());
+        assert_eq!(rest(&input), "; ,");
+        assert!(input.parse::<Option<Semicolon>>().unwrap().is_some());
+        assert!(input.parse::<Option<Comma>>().unwrap().is_some());
+        assert!(input.parse::<Option<Comma>>().unwrap().is_none());
+    }
+
+    #[test]
+    fn punctuated_greedy() {
+        let empty = round_trip::<Punctuated<Ident, Comma>>(quote! {});
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+
+        let one = round_trip::<Punctuated<Ident, Comma>>(quote! { a });
+        assert_eq!(one.len(), 1);
+        assert!(one.trailing().is_some());
+
+        let trailing = round_trip::<Punctuated<Ident, Comma>>(quote! { a, b, });
+        assert_eq!(trailing.len(), 2);
+        assert!(trailing.trailing().is_none());
+        assert_eq!(trailing.iter_pairs().count(), 2);
+
+        let list = round_trip::<Punctuated<Ident, Comma, Greedy>>(quote! { a, b, c });
+        let names: Vec<_> = list.iter().map(ToString::to_string).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(list.iter_pairs().count(), 2);
+
+        // Greedy fails on anything that isn't a list until the end.
+        assert!(parse_all::<Punctuated<Ident, Comma>>(quote! { a, 1 }).is_err());
+        assert!(parse_all::<Punctuated<Ident, Comma>>(quote! { a b }).is_err());
+        assert!(parse_all::<Punctuated<Ident, Comma>>(quote! { a,, }).is_err());
+    }
+
+    #[test]
+    fn punctuated_stop_on_error() {
+        let mut input = ParseBuffer::new(quote! { a, b c });
+        let list = input
+            .parse::<Punctuated<Ident, Comma, StopOnError>>()
+            .unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.trailing().is_some());
+        assert_eq!(rest(&input), "c");
+
+        // A trailing separator is kept, and the failed element isn't consumed.
+        let mut input = ParseBuffer::new(quote! { a, b, 1 });
+        let list = input
+            .parse::<Punctuated<Ident, Comma, StopOnError>>()
+            .unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.trailing().is_none());
+        assert_eq!(rest(&input), "1");
+
+        let mut input = ParseBuffer::new(quote! { 1 });
+        let list = input
+            .parse::<Punctuated<Ident, Comma, StopOnError>>()
+            .unwrap();
+        assert!(list.is_empty());
+        assert_eq!(rest(&input), "1");
+    }
+
+    #[test]
+    fn punctuated_construction_and_iteration() {
+        let mut list: Punctuated<Ident, Comma> = Punctuated::new();
+        list.push((ident("a"), comma()));
+        list.push((ident("b"), comma()));
+        assert_eq!(list.to_token_stream().to_string(), "a , b ,");
+
+        // Pushing after an element without a separator keeps the order.
+        let mut list = round_trip::<Punctuated<Ident, Comma>>(quote! { a, b });
+        list.push((ident("c"), comma()));
+        assert_eq!(list.to_token_stream().to_string(), "a , b , c");
+        assert_eq!(list.len(), 3);
+
+        list.push_back((ident("z"), comma()));
+        assert_eq!(list.to_token_stream().to_string(), "z , a , b , c");
+
+        for ident in &mut list {
+            *ident = Ident::new(&ident.to_string().to_uppercase(), ident.span());
+        }
+        let names: Vec<_> = (&list).into_iter().map(ToString::to_string).collect();
+        assert_eq!(names, ["Z", "A", "B", "C"]);
+        let owned: Vec<_> = list.into_iter().map(|ident| ident.to_string()).collect();
+        assert_eq!(owned, ["Z", "A", "B", "C"]);
+
+        let one: Punctuated<Ident, Comma> = Punctuated::one(ident("x"));
+        assert_eq!(one.to_token_stream().to_string(), "x");
+    }
+
+    #[test]
+    fn vec_stops_at_the_first_failure() {
+        let mut input = ParseBuffer::new(quote! { a b 1 c });
+        let idents = input.parse::<Vec<Ident>>().unwrap();
+        assert_eq!(idents.len(), 2);
+        assert_eq!(rest(&input), "1 c");
+
+        // A partially-parsed element is rolled back.
+        let mut input = ParseBuffer::new(quote! { a, b, c });
+        let pairs = input.parse::<Vec<(Ident, Comma)>>().unwrap();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(rest(&input), "c");
+    }
+
+    #[test]
+    fn greedy_vec_requires_everything() {
+        let idents = parse_all::<GreedyVec<Ident>>(quote! { a b c })
+            .unwrap()
+            .inner();
+        assert_eq!(idents.len(), 3);
+        assert!(parse_all::<GreedyVec<Ident>>(quote! {}).is_ok());
+        let mut input = ParseBuffer::new(quote! { a b 1 c });
+        assert!(input.parse::<GreedyVec<Ident>>().is_err());
+    }
+
+    #[test]
+    fn either_takes_the_first_match() {
+        type Value = Either<Ident, Literal, Punct>;
+        assert!(matches!(
+            round_trip::<Value>(quote! { a }),
+            Either::First(_)
+        ));
+        assert!(matches!(
+            round_trip::<Value>(quote! { 1 }),
+            Either::Second(_)
+        ));
+        assert!(matches!(
+            round_trip::<Value>(quote! { + }),
+            Either::Third(_)
+        ));
+        assert!(parse_all::<Value>(quote! { (a) }).is_err());
+
+        // Order matters: the first alternative that parses wins, even if a
+        // later one would consume more.
+        let mut input = ParseBuffer::new(quote! { a, b });
+        let value = input
+            .parse::<Either<Ident, (Ident, Comma, Ident)>>()
+            .unwrap();
+        assert!(matches!(value, Either::First(_)));
+        assert_eq!(rest(&input), ", b");
+
+        let value = parse_all::<Either<u8, String, char, bool, Ident>>(quote! { x }).unwrap();
+        assert!(matches!(value, Either::Fifth(_)));
+        let value = parse_all::<Either<u8, String, char, bool, Ident>>(quote! { true }).unwrap();
+        assert!(matches!(value, Either::Fourth(true)));
+
+        // A failure collects every alternative's error.
+        let error = parse_all::<Either<u8, char>>(quote! { x }).err().unwrap();
+        assert_eq!(error.to_token_stream().into_iter().count(), 6);
     }
 }

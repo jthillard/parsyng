@@ -5,18 +5,21 @@
 //! (`&`/`&mut`), literal (any
 //! [`ast::literal::Literal`](crate::ast::literal::Literal), optionally
 //! negated), path
-//! (`Foo::Bar`), tuple-struct (`Foo(a, b)`), struct (`Foo { a, b: pat, ..
-//! }`), rest (`..`), and `|` alternation. Not covered: slice patterns,
-//! range patterns (`1..=5`), and box patterns.
+//! (`Foo::Bar`), qualified path (`<T as Trait>::CONST`), tuple-struct
+//! (`Foo(a, b)`), struct (`Foo { a, 0: b, c: pat, .. }`), macro invocation
+//! (`m!(x)`), rest (`..`), and `|` alternation. Not covered: slice
+//! patterns, range patterns (`1..=5`), and box patterns.
 
 use crate::ToTokens;
 
 use crate::{
     ast::{
         delimiter::{Braced, Parenthesized},
-        literal::Literal,
+        item::macro_item::MacroInvocationItem,
+        literal::{Literal, LiteralNumber},
         path::SimplePath,
-        tokens::{And, Colon, Comma, DotDot, Minus, Mut, Or, Ref},
+        tokens::{And, At, Colon, Comma, DotDot, Minus, Mut, Or, Ref},
+        r#type::TypeQualifiedPath,
     },
     combinator::Punctuated,
     error::Diagnostics,
@@ -56,6 +59,14 @@ pub enum Pattern {
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#path-patterns>
     Path(PatPath),
+    /// A qualified path pattern, e.g. `<T as Trait>::CONST` or `<T>::CONST`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/patterns.html#path-patterns>
+    QualifiedPath(Box<TypeQualifiedPath>),
+    /// A macro invocation in pattern position, e.g. `m!(x)`.
+    ///
+    /// Reference: <https://doc.rust-lang.org/reference/macros.html#macro-invocation>
+    Macro(MacroInvocationItem),
     /// A tuple-struct pattern: `Path(a, b, ..)`.
     ///
     /// Reference: <https://doc.rust-lang.org/reference/patterns.html#tuple-struct-patterns>
@@ -75,7 +86,7 @@ pub enum Pattern {
     Or(Box<PatOr>),
 }
 
-/// A binding pattern, e.g. `ref mut name`.
+/// A binding pattern, e.g. `ref mut name` or `name @ Some(_)`.
 ///
 /// Reference: <https://doc.rust-lang.org/reference/patterns.html#identifier-patterns>
 #[derive(Clone)]
@@ -84,6 +95,20 @@ pub struct PatIdent {
     by_ref: Option<Ref>,
     mutability: Option<Mut>,
     ident: Ident,
+    subpattern: Option<(At, Box<Pattern>)>,
+}
+
+/// The `@ pattern` of a binding (a pattern without top-level `|`: `x @ A |
+/// B` is `(x @ A) | B`).
+fn parse_subpattern(input: &mut ParseBuffer) -> crate::error::Result<Option<(At, Box<Pattern>)>> {
+    if input.peek_punct_char().is_some_and(|(ch, _)| ch == '@') {
+        Ok(Some((
+            input.parse()?,
+            Box::new(Pattern::parse_atom(input)?),
+        )))
+    } else {
+        Ok(None)
+    }
 }
 
 impl Pattern {
@@ -98,6 +123,8 @@ impl Pattern {
             Self::Tuple(_)
             | Self::Literal(_)
             | Self::Path(_)
+            | Self::QualifiedPath(_)
+            | Self::Macro(_)
             | Self::TupleStruct(_)
             | Self::Struct(_)
             | Self::Rest(_)
@@ -115,6 +142,8 @@ impl Pattern {
             | Self::Tuple(_)
             | Self::Literal(_)
             | Self::Path(_)
+            | Self::QualifiedPath(_)
+            | Self::Macro(_)
             | Self::TupleStruct(_)
             | Self::Struct(_)
             | Self::Rest(_)
@@ -154,7 +183,17 @@ impl Pattern {
         if matches!(input.peek_ident_str(), Some("ref" | "mut")) {
             return Ok(Self::Ident(input.parse()?));
         }
-        let path: SimplePath = input.parse()?;
+        if input.peek_punct_char().is_some_and(|(ch, _)| ch == '<') {
+            return Ok(Self::QualifiedPath(Box::new(
+                TypeQualifiedPath::parse_expression(input)?,
+            )));
+        }
+        let mut fork = input.clone();
+        let path: SimplePath = fork.parse()?;
+        if fork.peek_punct_char().is_some_and(|(ch, _)| ch == '!') {
+            return MacroInvocationItem::parse_without_semicolon(input).map(Self::Macro);
+        }
+        *input = fork;
         if let Some(group) = input.peek_group() {
             if group.delimiter() == Delimiter::Parenthesis {
                 return Ok(Self::TupleStruct(Box::new(PatTupleStruct {
@@ -180,6 +219,7 @@ impl Pattern {
                 by_ref: None,
                 mutability: None,
                 ident: ident.clone(),
+                subpattern: parse_subpattern(input)?,
             }));
         }
         Ok(Self::Path(PatPath { path }))
@@ -262,6 +302,8 @@ pub struct PatStruct {
 pub enum StructPatternField {
     /// `field: pattern`.
     Named(Ident, Colon, Pattern),
+    /// `0: pattern`, for a tuple struct's field.
+    Unnamed(LiteralNumber, Colon, Pattern),
     /// `ref? mut? field` shorthand.
     Shorthand(PatIdent),
     /// `..`, matching (and ignoring) any remaining fields.
@@ -303,6 +345,7 @@ impl Parse for PatIdent {
             by_ref: input.try_parse().ok(),
             mutability: input.try_parse().ok(),
             ident: input.parse()?,
+            subpattern: parse_subpattern(input)?,
         })
     }
 }
@@ -378,6 +421,10 @@ impl Parse for StructPatternField {
         if let Ok((ident, colon, pat)) = input.try_parse::<(Ident, Colon, Pattern)>() {
             return Ok(Self::Named(ident, colon, pat));
         }
+        if input.peek_literal().is_some() {
+            let (index, colon, pat) = input.parse::<(LiteralNumber, Colon, Pattern)>()?;
+            return Ok(Self::Unnamed(index, colon, pat));
+        }
         Ok(Self::Shorthand(input.parse()?))
     }
 }
@@ -420,6 +467,8 @@ impl ToTokens for Pattern {
             Self::Ref(reference) => reference.to_tokens(tokens),
             Self::Literal(literal) => literal.to_tokens(tokens),
             Self::Path(path) => path.to_tokens(tokens),
+            Self::QualifiedPath(path) => path.to_tokens(tokens),
+            Self::Macro(invocation) => invocation.to_tokens(tokens),
             Self::TupleStruct(tuple_struct) => tuple_struct.to_tokens(tokens),
             Self::Struct(r#struct) => r#struct.to_tokens(tokens),
             Self::Rest(rest) => rest.to_tokens(tokens),
@@ -433,6 +482,10 @@ impl ToTokens for PatIdent {
         self.by_ref.to_tokens(tokens);
         self.mutability.to_tokens(tokens);
         self.ident.to_tokens(tokens);
+        if let Some((at, subpattern)) = &self.subpattern {
+            at.to_tokens(tokens);
+            subpattern.to_tokens(tokens);
+        }
     }
 }
 
@@ -488,6 +541,11 @@ impl ToTokens for StructPatternField {
         match self {
             Self::Named(ident, colon, pat) => {
                 ident.to_tokens(tokens);
+                colon.to_tokens(tokens);
+                pat.to_tokens(tokens);
+            }
+            Self::Unnamed(index, colon, pat) => {
+                index.to_tokens(tokens);
                 colon.to_tokens(tokens);
                 pat.to_tokens(tokens);
             }
@@ -590,5 +648,85 @@ mod tests {
     fn test_pattern_plain_ident() {
         let plain = check::<Pattern>(quote! { name });
         assert!(matches!(plain, Pattern::Ident(_)));
+    }
+
+    #[test]
+    fn test_pattern_ident_accessors() {
+        let by_ref = check::<Pattern>(quote! { ref x });
+        assert_eq!(by_ref.ident().unwrap().to_string(), "x");
+        assert!(by_ref.mutability().is_none());
+
+        let by_mut = check::<Pattern>(quote! { mut x });
+        assert!(by_mut.mutability().is_some());
+
+        let through_ref = check::<Pattern>(quote! { &mut x });
+        assert_eq!(through_ref.ident().unwrap().to_string(), "x");
+
+        let tuple = check::<Pattern>(quote! { (x, y) });
+        assert!(tuple.ident().is_none());
+    }
+
+    #[test]
+    fn test_pattern_nested() {
+        check::<Pattern>(quote! { Some(Ok((a, _))) });
+        check::<Pattern>(quote! { Foo { a: Bar(b, ..), c: (d, e), ref mut f } });
+        check::<Pattern>(quote! { &&(a, &b) });
+        check::<Pattern>(quote! { (Some(1 | 2), None) });
+        check::<Pattern>(quote! { Some(A | B) | None });
+        check::<Pattern>(quote! { () });
+        check::<Pattern>(quote! { (a,) });
+        check::<Pattern>(quote! { Foo {} });
+        check::<Pattern>(quote! { r#type });
+        check::<Pattern>(quote! { a::B::C { 0: x, 1: (y, _), .. } });
+        check::<Pattern>(quote! { Tuple { 0: ref a, 1: _ } });
+    }
+
+    #[test]
+    fn test_pattern_macro() {
+        let invocation = check::<Pattern>(quote! { m!(x) });
+        assert!(matches!(invocation, Pattern::Macro(_)));
+        check::<Pattern>(quote! { a::m![1, 2] });
+        check::<Pattern>(quote! { Some(m! { x }) | None });
+        // A macro pattern doesn't take the `;` after it.
+        check::<crate::ast::statements::Statement>(quote! { let m!(x) = y; });
+    }
+
+    #[test]
+    fn test_pattern_literals() {
+        for literal in [
+            quote! { 'c' },
+            quote! { b'c' },
+            quote! { 1.5 },
+            quote! { -1.5 },
+            quote! { b"bytes" },
+            quote! { true },
+            quote! { false },
+        ] {
+            check::<Pattern>(literal);
+        }
+    }
+
+    #[test]
+    fn test_pattern_paths() {
+        let qualified = check::<Pattern>(quote! { <T as Trait>::CONST });
+        assert!(matches!(qualified, Pattern::QualifiedPath(_)));
+        check::<Pattern>(quote! { <T>::CONST });
+        check::<Pattern>(quote! { <Vec<u8> as Trait>::A::B });
+        check::<Pattern>(quote! { Some(<T as Trait>::CONST) | None });
+        check::<Pattern>(quote! { Self::Variant(x) });
+        check::<Pattern>(quote! { ::a::B });
+        check::<Pattern>(quote! { crate::A { x } });
+    }
+
+    #[test]
+    fn test_pattern_binding() {
+        let binding = check::<Pattern>(quote! { x @ Some(_) });
+        assert_eq!(binding.ident().unwrap().to_string(), "x");
+        check::<Pattern>(quote! { ref mut x @ (a, b) });
+        check::<Pattern>(quote! { (x @ _, y) });
+        check::<Pattern>(quote! { Foo { a: n @ Some(_), .. } });
+        // `@` binds tighter than `|`.
+        let or = check::<Pattern>(quote! { x @ A | B });
+        assert!(matches!(or, Pattern::Or(_)));
     }
 }

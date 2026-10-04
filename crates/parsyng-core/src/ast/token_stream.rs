@@ -163,3 +163,67 @@ impl ToTokens for TokenStreamUntilCommaOrGt {
         self.tokens.to_tokens(tokens);
     }
 }
+
+#[cfg(all(test, feature = "fallback"))]
+mod tests {
+    use super::{TokenStreamUntilComma, TokenStreamUntilCommaOrGt, TokenStreamUntilSemicolon};
+    use crate as parsyng;
+    use crate::parse::{Parse, ParseBuffer};
+    use crate::proc_macro::TokenStream;
+    use parsyng_quote_macros::quote;
+
+    /// Parse a `T` and return its tokens and the tokens left, printed.
+    fn split<T: Parse + crate::ToTokens>(tokens: TokenStream) -> (String, String) {
+        let mut input = ParseBuffer::new(tokens);
+        let value = input.parse::<T>().unwrap();
+        (
+            value.to_token_stream().to_string(),
+            input.collect::<TokenStream>().to_string(),
+        )
+    }
+
+    #[test]
+    fn until_semicolon() {
+        let (taken, rest) = split::<TokenStreamUntilSemicolon>(quote! { a + { b; c } , (d;) ; e });
+        assert_eq!(taken, quote! { a + { b; c } , (d;) }.to_string());
+        assert_eq!(rest, "; e");
+        let (taken, rest) = split::<TokenStreamUntilSemicolon>(quote! { a b });
+        assert_eq!(taken, "a b");
+        assert_eq!(rest, "");
+        let (taken, rest) = split::<TokenStreamUntilSemicolon>(quote! { ; });
+        assert_eq!(taken, "");
+        assert_eq!(rest, ";");
+    }
+
+    #[test]
+    fn until_comma() {
+        let (taken, rest) = split::<TokenStreamUntilComma>(quote! { f(a, b) + [c, d] , e });
+        assert_eq!(taken, quote! { f(a, b) + [c, d] }.to_string());
+        assert_eq!(rest, ", e");
+        // Not generics-aware: `,` inside `<...>` ends the capture.
+        let (taken, rest) = split::<TokenStreamUntilComma>(quote! { A<B, C> });
+        assert_eq!(taken, "A < B");
+        assert_eq!(rest, ", C >");
+        let (taken, rest) = split::<TokenStreamUntilComma>(quote! { a; b });
+        assert_eq!(taken, "a ; b");
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn until_comma_or_gt() {
+        let (taken, rest) = split::<TokenStreamUntilCommaOrGt>(quote! { { N > 1 } > });
+        assert_eq!(taken, quote! { { N > 1 } }.to_string());
+        assert_eq!(rest, ">");
+        let (taken, rest) = split::<TokenStreamUntilCommaOrGt>(quote! { 3, 4 });
+        assert_eq!(taken, "3");
+        assert_eq!(rest, ", 4");
+    }
+
+    #[test]
+    fn captures_round_trip() {
+        let tokens = quote! { a::b(c) };
+        let mut input = ParseBuffer::new(tokens.clone());
+        let captured = input.parse::<TokenStreamUntilSemicolon>().unwrap();
+        assert_eq!(captured.tokens().to_string(), tokens.to_string());
+    }
+}

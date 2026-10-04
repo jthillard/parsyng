@@ -168,7 +168,14 @@ macro_rules! unsigned_integer_impls {
                     if !lit.suffix().is_empty() && lit.suffix() != stringify!($ty) {
                         return Err(Diagnostics::new_error_spanned(format!(concat!("Expected ", stringify!($ty), ", found `{}`"), lit.suffix()), lit.span()));
                     }
-                    lit.content().parse::<$ty>().map_err(|err| {
+                    let radix = match lit.prefix() {
+                        "0x" => 16,
+                        "0o" => 8,
+                        "0b" => 2,
+                        _ => 10,
+                    };
+                    let digits = lit.content().replace('_', "");
+                    <$ty>::from_str_radix(&digits, radix).map_err(|err| {
                         Diagnostics::new_error_spanned(format!(concat!("Failed to parse ", stringify!($ty)," literal: {}"), err), lit.span())
                     })
                 })

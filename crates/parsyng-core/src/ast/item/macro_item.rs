@@ -10,11 +10,12 @@ use crate::{
     },
     error::Diagnostics,
     parse::Parse,
-    proc_macro::{Group, Ident, Span},
+    proc_macro::{Delimiter, Group, Ident, Span},
 };
 
 /// A `macro_rules! name { ... }` declarative macro definition. The body is
-/// kept as a raw, opaque [`Group`].
+/// kept as a raw, opaque [`Group`]; a `(...)` or `[...]` body is followed
+/// by a `;`.
 ///
 /// Does not include leading attributes/visibility — see
 /// [`ItemMacroRules`](crate::ast::item::ItemMacroRules) for that.
@@ -27,6 +28,7 @@ pub struct MacroRulesItem {
     bang: Not,
     name: Ident,
     body: Group,
+    semi: Option<Semicolon>,
 }
 
 /// A Rust-2.0-style `macro name { ... }` declarative macro definition. The
@@ -77,11 +79,20 @@ impl Parse for MacroRulesItem {
                 input.span(),
             ));
         };
+        let bang = input.parse()?;
+        let name = input.parse()?;
+        let body: Group = input.parse()?;
+        let semi = if body.delimiter() == Delimiter::Brace {
+            None
+        } else {
+            Some(input.parse()?)
+        };
         Ok(Self {
             macro_rules_ident,
-            bang: input.parse()?,
-            name: input.parse()?,
-            body: input.parse()?,
+            bang,
+            name,
+            body,
+            semi,
         })
     }
 }
@@ -96,18 +107,39 @@ impl Parse for MacroItem {
     }
 }
 
+impl MacroInvocationItem {
+    /// Parse an invocation without a trailing `;`, as in type position,
+    /// where a following `;` belongs to the enclosing item.
+    pub(crate) fn parse_without_semicolon(
+        input: &mut crate::parse::ParseBuffer,
+    ) -> crate::error::Result<Self> {
+        // A path can't start with a strict keyword: `if !(a).b {}` is an
+        // `if`, not an `if!(a)` invocation.
+        if input.peek_keyword().is_some()
+            && !matches!(
+                input.peek_ident_str(),
+                Some("crate" | "self" | "Self" | "super" | "auto" | "default" | "raw" | "union")
+            )
+        {
+            return Err(Diagnostics::new_error_spanned(
+                "Expected a macro path",
+                input.span(),
+            ));
+        }
+        Ok(Self {
+            path: input.parse()?,
+            bang: input.parse()?,
+            body: input.parse()?,
+            semi: None,
+        })
+    }
+}
+
 impl Parse for MacroInvocationItem {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
-        let path: SimplePath = input.parse()?;
-        let bang: Not = input.parse()?;
-        let body: Group = input.parse()?;
-        let semi = input.try_parse().ok();
-        Ok(Self {
-            path,
-            bang,
-            body,
-            semi,
-        })
+        let mut invocation = Self::parse_without_semicolon(input)?;
+        invocation.semi = input.try_parse().ok();
+        Ok(invocation)
     }
 }
 
@@ -117,6 +149,7 @@ impl ToTokens for MacroRulesItem {
         self.bang.to_tokens(tokens);
         self.name.to_tokens(tokens);
         tokens.extend(Some(self.body.clone()));
+        self.semi.to_tokens(tokens);
     }
 }
 

@@ -4,6 +4,7 @@ use crate::ToTokens;
 
 use crate::{
     ast::{
+        attributes::{Attribute, parse_outer_attributes},
         delimiter::Braced,
         expression::{
             Expression, ExpressionWithBlock, ExpressionWithoutBlock, continues_with_postfix,
@@ -51,7 +52,8 @@ pub enum Statement {
     ExpressionWithoutBlock(ExpressionWithoutBlock, Option<Semicolon>),
 }
 
-/// A `let` statement: `let PATTERN: Type? = EXPR (else { ... })?;`.
+/// A `let` statement, with its outer attributes:
+/// `let PATTERN (: Type)? (= EXPR (else { ... })?)?;`.
 ///
 /// The `else` block (let-else) requires `expr` to not itself end in a
 /// block, to avoid ambiguity with the `else` — not enforced here (accepted
@@ -61,13 +63,21 @@ pub enum Statement {
 #[derive(Clone)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct LetStatement {
+    attributes: Vec<Attribute>,
     let_token: Let,
     pat: Pattern,
     ty: Option<(Colon, Type)>,
+    init: Option<LetInit>,
+    semicolon: Semicolon,
+}
+
+/// The `= EXPR (else { ... })?` initializer of a [`LetStatement`].
+#[derive(Clone)]
+#[cfg_attr(feature = "extra-traits", derive(Debug))]
+struct LetInit {
     eq: Eq,
     expr: Expression,
     else_branch: Option<(Else, Braced<Vec<Statement>>)>,
-    semicolon: Semicolon,
 }
 
 impl Parse for Statement {
@@ -106,17 +116,29 @@ impl Parse for Statement {
 
 impl Parse for LetStatement {
     fn parse(input: &mut crate::parse::ParseBuffer) -> crate::error::Result<Self> {
+        let attributes = parse_outer_attributes(input);
+        let let_token = input.parse()?;
+        let pat = input.parse()?;
+        let ty = input.try_parse().ok();
+        let init = if let Ok(eq) = input.try_parse() {
+            Some(LetInit {
+                eq,
+                expr: input.parse()?,
+                else_branch: if let Ok(else_token) = input.try_parse() {
+                    Some((else_token, input.parse()?))
+                } else {
+                    None
+                },
+            })
+        } else {
+            None
+        };
         Ok(Self {
-            let_token: input.parse()?,
-            pat: input.parse()?,
-            ty: input.try_parse().ok(),
-            eq: input.parse()?,
-            expr: input.parse()?,
-            else_branch: if let Ok(else_token) = input.try_parse() {
-                Some((else_token, input.parse()?))
-            } else {
-                None
-            },
+            attributes,
+            let_token,
+            pat,
+            ty,
+            init,
             semicolon: input.parse()?,
         })
     }
@@ -142,12 +164,15 @@ impl ToTokens for Statement {
 
 impl ToTokens for LetStatement {
     fn to_tokens(&self, tokens: &mut crate::proc_macro::TokenStream) {
+        self.attributes.to_tokens(tokens);
         self.let_token.to_tokens(tokens);
         self.pat.to_tokens(tokens);
         self.ty.to_tokens(tokens);
-        self.eq.to_tokens(tokens);
-        self.expr.to_tokens(tokens);
-        self.else_branch.to_tokens(tokens);
+        if let Some(init) = &self.init {
+            init.eq.to_tokens(tokens);
+            init.expr.to_tokens(tokens);
+            init.else_branch.to_tokens(tokens);
+        }
         self.semicolon.to_tokens(tokens);
     }
 }
