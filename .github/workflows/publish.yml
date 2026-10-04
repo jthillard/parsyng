@@ -1,0 +1,69 @@
+name: Publish
+
+# Publishes the versions currently in the manifests: bump them in a commit on
+# `main` first, then run this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Only package and verify, don't publish or tag
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Check versions
+        id: version
+        run: |
+          metadata=$(cargo metadata --no-deps --format-version 1)
+          version=$(jq -r '.packages[] | select(.name == "parsyng") | .version' <<<"$metadata")
+          mismatched=$(jq -r --arg v "$version" \
+            '.packages[] | select(.publish != [] and .version != $v) | "\(.name) \(.version)"' <<<"$metadata")
+          if [ -n "$mismatched" ]; then
+            echo "::error::Every published crate must be at version $version, found:"$'\n'"$mismatched"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists; bump the version first"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - run: cargo fmt --all --check
+      # `debug-attribute-example` intentionally fails to compile (it shows the debug output).
+      - run: cargo clippy --workspace --all-targets --features fallback,full --exclude debug-attribute-example -- -D warnings
+      - run: just test
+
+      - run: cargo publish --workspace --dry-run
+      - if: ${{ !inputs.dry-run }}
+        run: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Tag and release
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ steps.version.outputs.version }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "$TAG" --generate-notes
