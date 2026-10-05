@@ -1,0 +1,14 @@
+[package]
+name = "errors-example"
+description = "Demo of returning errors from proc-macros"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/supersurviveur/parsyng"
+keywords = ["macros", "proc", "quote"]
+categories = ["development-tools::procedural-macro-helpers"]
+
+[dependencies]
+errors-macros = { path = "../errors-macros" }

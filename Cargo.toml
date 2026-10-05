@@ -19,6 +19,8 @@ members = [
   "examples/heapsize/example",
   "examples/debug-attribute/debug-attribute-macros",
   "examples/debug-attribute/example",
+  "examples/errors/errors-macros",
+  "examples/errors/example",
 ]
 
 [package]

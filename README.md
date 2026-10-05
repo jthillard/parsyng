@@ -159,6 +159,8 @@ Rust 1.95 or newer (edition 2024).
   walking struct and enum fields, ported from `syn`'s documentation.
 - [`examples/debug-attribute`](examples/debug-attribute) — using the `debug`
   argument to diagnose a macro that emits invalid Rust syntax.
+- [`examples/errors`](examples/errors) — returning spanned errors from a
+  macro (`parsyng::error::Result`), including several at once.
 
 ## License
 
