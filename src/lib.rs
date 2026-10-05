@@ -117,7 +117,7 @@
 //! - **Speed**: `syn` takes a while to compile, and `moxy` even longer.
 //!   `parsyng` compiles significantly faster than `syn`/`quote`, `unsynn` and
 //!   `moxy`, and parses faster at runtime too; see
-//!   [`BENCH.md`](https://github.com/supersurviveur/parsyng/blob/main/BENCH.md)
+//!   [`BENCH.md`](https://github.com/jthillard/parsyng/blob/main/BENCH.md)
 //!   for the numbers.
 //! - **Grammar**: unlike `unsynn`, which ships no Rust grammar, `parsyng`
 //!   comes with an [`ast`] covering all of stable Rust (with the `full`
@@ -159,7 +159,7 @@
 //!   `#[parsyng::proc_macro(debug)]`), pipe its generated output through
 //!   `rustfmt` before printing it, instead of printing the raw, unformatted
 //!   token stream. See
-//!   [`examples/debug-attribute`](https://github.com/supersurviveur/parsyng/tree/main/examples/debug-attribute)
+//!   [`examples/debug-attribute`](https://github.com/jthillard/parsyng/tree/main/examples/debug-attribute)
 //!   for why this is useful when a macro emits invalid syntax that the Rust
 //!   parser itself can't explain.
 //!

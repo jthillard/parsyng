@@ -6,7 +6,7 @@ edition = "2024"
 publish = false
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/supersurviveur/parsyng"
+repository = "https://github.com/jthillard/parsyng"
 keywords = ["macros", "proc", "quote"]
 categories = ["development-tools::procedural-macro-helpers"]
 

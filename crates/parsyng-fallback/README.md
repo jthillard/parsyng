@@ -13,7 +13,7 @@ parsyng = { version = "0.1", features = ["fallback"] }
 ```
 
 See the [`parsyng` documentation](https://docs.rs/parsyng) and the
-[repository](https://github.com/supersurviveur/parsyng) for more information.
+[repository](https://github.com/jthillard/parsyng) for more information.
 
 ## License
 

@@ -5,7 +5,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 license = "MIT"
-repository = "https://github.com/supersurviveur/parsyng"
+repository = "https://github.com/jthillard/parsyng"
 
 [dependencies]
 bench-comptime = { path = "../bench-comptime", features = ["big"] }
