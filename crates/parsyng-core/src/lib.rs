@@ -3,7 +3,7 @@
 //! This crate provides the token-stream wrapper, parsing traits, AST types,
 //! and quote helpers used by the proc-macro front-end.
 
-// TODO: Maybe some additional restrictions can be helpfull, especially on comments.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(
     clippy::all,
     clippy::pedantic,

@@ -685,6 +685,12 @@ impl<T: Parse> Parse for Box<T> {
 /// ever being able to actually produce the unused variants. Its error has
 /// no message, so that it adds nothing to the errors `Either` collects from
 /// its real alternatives.
+///
+/// # Panics
+///
+/// [`ToTokens::to_tokens`] panics: a successful parse never produces an
+/// `Invalid`, so reaching it means one was built by hand (e.g. through
+/// [`Default`]).
 #[derive(Clone, Default)]
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 pub struct Invalid;

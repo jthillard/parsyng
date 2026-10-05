@@ -9,7 +9,7 @@ repository = "https://github.com/supersurviveur/parsyng"
 documentation = "https://docs.rs/parsyng-proc-macros"
 rust-version = "1.95"
 include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
-keywords = ["macros", "proc", "quote"]
+keywords = ["proc-macro", "syn", "quote", "parser", "macros"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]

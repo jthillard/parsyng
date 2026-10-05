@@ -13,7 +13,7 @@ crate.
 parsyng = "0.1"
 ```
 
-## What's in the box
+It gives you:
 
 - **`ast`** — a tree of Rust syntax types (items, expressions, types,
   patterns, generics, ...), each implementing `Parse` to turn a
@@ -55,24 +55,66 @@ plumbing required.
 A `#[derive(...)]`-style macro built directly on the `ast` types, ported from
 `syn`'s own `heapsize` example, lives in [`examples/heapsize`](examples/heapsize).
 
-## Why not `syn`?
+### Building token streams with `quote!`
 
-`parsyng`'s grammar coverage is close to the full stable Rust grammar; the
-remaining gaps (slice, range and `box` patterns, and unstable syntax such as
-`try` blocks) are listed in the `ast` module documentation, and are reported
-as regular parse errors. What it offers on top:
+```rust
+use parsyng::quote;
 
-- A single crate with no required dependency on `syn`/`quote`, built directly
-  on `proc_macro` (or, optionally, `parsyng-fallback`, its own pure-Rust
-  implementation of the token types, for tests).
-- `quote!` implemented as a genuine procedural macro rather than a
-  `macro_rules!`, which noticeably reduces the compile time of macro-heavy
-  crates — see [`BENCH.md`](BENCH.md) for numbers against `syn`/`quote`,
-  `unsynn` and `moxy` (regenerate them with `just bench-report`).
-- The `#[parsyng::proc_macro]` / `#[parsyng::proc_macro_attribute]` /
-  `#[parsyng::proc_macro_derive]` helper attributes, which remove almost all
-  of the boilerplate `syn`/`quote`-based macros still need to hand-write
-  (parsing the input, matching on the `Result`, converting the output).
+let name = "world";
+let tokens = quote! {
+    println!("Hello, {}!", #name);
+};
+```
+
+`#ident` interpolates a value that implements `ToTokens`, `#{ expr }`
+interpolates the result of an arbitrary expression, and `#(...)*` /
+`#(...),*` repeats its body once per item yielded by an `Iterator`.
+
+### Parsing token streams
+
+```rust
+use parsyng::ast::item::ItemStruct;
+use parsyng::parse::ParseBuffer;
+use parsyng::quote;
+
+let source = quote! {
+    struct Point { x: f64, y: f64 }
+};
+
+let mut buffer = ParseBuffer::new(source);
+let item: ItemStruct = buffer.parse().unwrap();
+assert_eq!(item.ident().to_string(), "Point");
+```
+
+Every `ast` node can be parsed this way. `Parse` is also implemented for many
+standard types (`u8`..`u128`, `bool`, `Option<T>`, `Vec<T>`, tuples, ...) as
+well as combinators like `Punctuated` and `Either`, so custom `ast`-like types
+built out of them get parsing for free.
+
+Outside of a macro invocation (unit tests, `build.rs`), these snippets need
+the `fallback` feature; see [Feature flags](#feature-flags).
+
+## Why not `syn`/`unsynn`/`moxy`?
+
+The most widely used crate for writing procedural macros is `syn`. It is
+powerful and relatively easy to use, but it also has some flaws this crate
+tries to fix, without the trade-offs of alternatives like `unsynn` and `moxy`:
+
+- **One dependency**: a single crate in your `Cargo.toml`, instead of `syn`,
+  `quote` and `proc-macro2`.
+- **Boilerplate**: `syn`/`quote`-based macros need to hand-write a lot of
+  boilerplate (parsing the input, matching on the `Result`, converting the
+  output), even for simple macros. The `#[parsyng::proc_macro]` /
+  `#[parsyng::proc_macro_attribute]` / `#[parsyng::proc_macro_derive]` helper
+  attributes remove it.
+- **Speed**: `syn` takes a while to compile, and `moxy` even longer. `parsyng`
+  compiles significantly faster than `syn`/`quote`, `unsynn` and `moxy`, and
+  parses faster at runtime too; see [`BENCH.md`](BENCH.md) for the numbers.
+- **Grammar**: unlike `unsynn`, which ships no Rust grammar, `parsyng` comes
+  with an AST covering all of stable Rust (with the `full` feature).
+- **Simplicity**: `moxy` introduces many new concepts for writing macros.
+  `parsyng` stays close to the `syn`/`quote` model (`Parse`, `ToTokens`,
+  `quote!`), without adding much complexity.
 
 ## Minimum supported Rust version
 
@@ -91,15 +133,16 @@ Rust 1.95 or newer (edition 2024).
   noticeably faster.
 - **`extra-traits`** — `Debug` implementations for the AST and combinator
   types.
-- **`fallback`** — use `parsyng-fallback`, a pure-Rust implementation of the
-  token types, instead of the compiler's built-in `proc_macro`. Required to
+- **`fallback`** — use the `parsyng-fallback` crate, a pure-Rust
+  implementation of the token types (parsyng's counterpart of `proc-macro2`),
+  instead of the compiler's built-in `proc_macro`. Required to
   call `quote!`, `parse_quote!` or any `Parse`/`ToTokens` implementation
   outside of an actual macro invocation (for example, in unit tests or a
   `build.rs`), since the real `proc_macro` crate panics when used outside the
   compiler's macro expansion context. Unlike `proc_macro2`, it never forwards
-  to the compiler, which makes it much faster; a proc-macro crate built with
-  it (e.g. through a dev-dependency) still works, but its macros lose
-  spans.
+  to the compiler; a proc-macro crate built with it still works, but its macros lose
+  spans, so only enable it for code running outside the compiler (e.g. as a
+  dev-dependency feature for tests).
 - **`debug-pretty`** — when a macro built with `#[parsyng::proc_macro]` & co.
   is annotated with the `debug` argument (e.g.
   `#[parsyng::proc_macro(debug)]`), pipe its generated output through
@@ -107,17 +150,6 @@ Rust 1.95 or newer (edition 2024).
   token stream. See [`examples/debug-attribute`](examples/debug-attribute)
   for why this is useful when a macro emits invalid syntax that the Rust
   parser itself can't explain.
-
-## Crate layout
-
-This `parsyng` crate is a thin façade over three implementation crates,
-all re-exported here so that depending on `parsyng` alone is enough:
-
-| Crate                 | Provides                                                              |
-| ---------------------- | ---------------------------------------------------------------------- |
-| `parsyng-core`         | `ast`, `parse`, `combinator`, `error`, the `ToTokens` trait           |
-| `parsyng-quote-macros` | `quote!`, `quote_spanned!`                                             |
-| `parsyng-proc-macros`  | `#[proc_macro]` & co., `#[derive(Parse)]`, `#[derive(ToTokens)]`      |
 
 ## Examples
 

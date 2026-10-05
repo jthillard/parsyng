@@ -32,13 +32,13 @@ repository = "https://github.com/supersurviveur/parsyng"
 documentation = "https://docs.rs/parsyng"
 rust-version = "1.95"
 include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
-keywords = ["macros", "proc", "quote"]
+keywords = ["proc-macro", "syn", "quote", "parser", "macros"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [dependencies]
-parsyng-proc-macros = { version = "0.1.0", path = "./crates/parsyng-proc-macros", optional = true }
-parsyng-core = { version = "0.1.0", path = "./crates/parsyng-core", default-features = false }
-parsyng-quote-macros = { version = "0.1.0", path = "./crates/parsyng-quote-macros" }
+parsyng-proc-macros = { version = "=0.1.0", path = "./crates/parsyng-proc-macros", optional = true }
+parsyng-core = { version = "=0.1.0", path = "./crates/parsyng-core", default-features = false }
+parsyng-quote-macros = { version = "=0.1.0", path = "./crates/parsyng-quote-macros" }
 
 [features]
 default = ["parsing"]
@@ -55,8 +55,11 @@ full = ["parsing", "parsyng-core/full"]
 fallback = ["parsyng-core/fallback"]
 # `Debug` implementations for the AST and combinator types.
 extra-traits = ["parsyng-core/extra-traits"]
+# Pipe the output of `#[parsyng::proc_macro(debug)]` & co. through `rustfmt`.
 debug-pretty = ["parsyng-core/debug-pretty"]
 
 
 [package.metadata.docs.rs]
-all-features = true
+# Not `fallback`: document the compiler's `proc_macro` token types.
+features = ["full", "extra-traits"]
+rustdoc-args = ["--cfg", "docsrs"]

@@ -9,7 +9,7 @@ repository = "https://github.com/supersurviveur/parsyng"
 documentation = "https://docs.rs/parsyng-fallback"
 rust-version = "1.95"
 include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
-keywords = ["macros", "proc", "tokens"]
+keywords = ["proc-macro", "tokens", "lexer", "macros"]
 categories = ["development-tools::procedural-macro-helpers"]
 
 [dependencies]

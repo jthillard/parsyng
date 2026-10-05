@@ -100,43 +100,71 @@
 //! [`combinator::Either`], so custom [`ast`]-like types built out of them get
 //! parsing for free.
 //!
-//! # `syn` vs `parsyng`
+//! # Why not `syn`/`unsynn`/`moxy`?
 //!
-//! `parsyng` aims to be as complete as `syn`, but with some useful helpers to
-//! reduce the complexity of procedural macros. Its grammar coverage is close
-//! to the full stable Rust grammar — see the [`ast`] module documentation for
-//! the few remaining gaps. Here are the differences between `parsyng` and
-//! `syn`:
+//! The most widely used crate for writing procedural macros is `syn`. It is
+//! powerful and relatively easy to use, but it also has some flaws this crate
+//! tries to fix, without the trade-offs of alternatives like `unsynn` and
+//! `moxy`:
 //!
-//! - A single crate with no required external dependency on `syn`/`quote`,
-//!   built directly on `proc_macro` (a pure-Rust fallback is opt-in).
-//! - The [`macro@proc_macro`] / [`macro@proc_macro_attribute`] /
-//!   [`macro@proc_macro_derive`] helper attributes, which remove almost all of
-//!   the boilerplate `syn`/`quote`-based macros still need to hand-write
-//!   (parsing the input, matching on the `Result`, converting the output).
-//! - More types implement [`Parse`] (`u8`, `String`, `char`, `bool`, ...),
-//!   and the [`macro@Parse`]/[`macro@ToTokens`] derive macros avoid
-//!   implementing them manually.
+//! - **One dependency**: a single crate in your `Cargo.toml`, instead of
+//!   `syn`, `quote` and `proc-macro2`.
+//! - **Boilerplate**: `syn`/`quote`-based macros need to hand-write a lot of
+//!   boilerplate (parsing the input, matching on the `Result`, converting the
+//!   output), even for simple macros. The [`macro@proc_macro`] /
+//!   [`macro@proc_macro_attribute`] / [`macro@proc_macro_derive`] helper
+//!   attributes remove it.
+//! - **Speed**: `syn` takes a while to compile, and `moxy` even longer.
+//!   `parsyng` compiles significantly faster than `syn`/`quote`, `unsynn` and
+//!   `moxy`, and parses faster at runtime too; see
+//!   [`BENCH.md`](https://github.com/supersurviveur/parsyng/blob/main/BENCH.md)
+//!   for the numbers.
+//! - **Grammar**: unlike `unsynn`, which ships no Rust grammar, `parsyng`
+//!   comes with an [`ast`] covering all of stable Rust (with the `full`
+//!   feature).
+//! - **Simplicity**: `moxy` introduces many new concepts for writing macros.
+//!   `parsyng` stays close to the `syn`/`quote` model ([`Parse`],
+//!   [`ToTokens`], [`quote!`]), without adding much complexity.
+//!
+//! # Minimum supported Rust version
+//!
+//! Rust 1.95 or newer (edition 2024).
 //!
 //! # Feature flags
 //!
-//! - **`fallback`** — use `parsyng-fallback`, a pure-Rust implementation of
-//!   the token types, instead of the compiler's built-in `proc_macro` for
-//!   every token type in [`ast`] and [`quote!`]'s output. Required to call
-//!   [`quote!`], [`parse_quote!`] or any [`Parse`]/[`ToTokens`]
+//! - **`parsing`** (default) — the [`Parse`] machinery, the [`ast`],
+//!   [`parse_quote!`] and the helper attributes. Without it only [`quote!`],
+//!   [`quote_spanned!`], [`format_ident!`] and [`ToTokens`] remain.
+//! - **`full`** — the whole Rust grammar: expressions, statements, patterns,
+//!   function signatures, every item kind (`ast::item::Item`) and whole source
+//!   files (`ast::crate_source::Crate`). Without it, the AST covers what derive
+//!   macros need (types, paths, generics, `where` clauses, attributes,
+//!   visibility, literals, structs and enums, [`DeriveInput`]), which compiles
+//!   noticeably faster.
+//! - **`extra-traits`** — `Debug` implementations for the AST and combinator
+//!   types.
+//! - **`fallback`** — use the `parsyng-fallback` crate, a pure-Rust
+//!   implementation of the token types (parsyng's counterpart of
+//!   `proc-macro2`), instead of the compiler's built-in `proc_macro`. Required
+//!   to call [`quote!`], [`parse_quote!`] or any [`Parse`]/[`ToTokens`]
 //!   implementation outside of an actual macro invocation (for example, in
 //!   unit tests or a `build.rs`), since the real `proc_macro` crate panics
 //!   when used outside the compiler's macro expansion context. Unlike
-//!   `proc_macro2`, it never forwards to the compiler: if a proc-macro crate
-//!   ends up built with it (e.g. a dev-dependency enabling it, which Cargo
-//!   unifies with the normal one when building tests), its macros still
-//!   work, but their input and output go through a print-and-re-lex
-//!   conversion that loses spans.
-//! - **`debug-pretty`** — when a macro built with [`macro@proc_macro`] or another helper is
-//!   annotated with the `debug` argument (e.g. `#[parsyng::proc_macro(debug)]`),
-//!   pipe its generated output through `rustfmt` before printing it, instead of
-//!   printing the raw, unformatted token stream. See
-//!   `examples/debug-attribute` for a worked example of why this is useful.
+//!   `proc_macro2`, it never forwards to the compiler; a proc-macro crate
+//!   built with it still works, but its macros lose spans, so only enable it
+//!   for code running outside the compiler (e.g. as a dev-dependency feature
+//!   for tests).
+//! - **`debug-pretty`** — when a macro built with [`macro@proc_macro`] & co.
+//!   is annotated with the `debug` argument (e.g.
+//!   `#[parsyng::proc_macro(debug)]`), pipe its generated output through
+//!   `rustfmt` before printing it, instead of printing the raw, unformatted
+//!   token stream. See
+//!   [`examples/debug-attribute`](https://github.com/supersurviveur/parsyng/tree/main/examples/debug-attribute)
+//!   for why this is useful when a macro emits invalid syntax that the Rust
+//!   parser itself can't explain.
+//!
+//! [`DeriveInput`]: ast::item::DeriveInput
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(
     clippy::all,
     clippy::pedantic,
