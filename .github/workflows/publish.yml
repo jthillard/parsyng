@@ -1,7 +1,8 @@
 name: Publish
 
-# Publishes the versions currently in the manifests: bump them in a commit on
-# `main` first, then run this workflow.
+# Publishes each crate whose manifest version isn't on crates.io yet, then tags
+# `v<parsyng version>`: bump the versions in a commit on `main` first, then run
+# this workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -30,17 +31,11 @@ jobs:
         with:
           tool: just
 
-      - name: Check versions
+      - name: Check version
         id: version
         run: |
-          metadata=$(cargo metadata --no-deps --format-version 1)
-          version=$(jq -r '.packages[] | select(.name == "parsyng") | .version' <<<"$metadata")
-          mismatched=$(jq -r --arg v "$version" \
-            '.packages[] | select(.publish != [] and .version != $v) | "\(.name) \(.version)"' <<<"$metadata")
-          if [ -n "$mismatched" ]; then
-            echo "::error::Every published crate must be at version $version, found:"$'\n'"$mismatched"
-            exit 1
-          fi
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "parsyng") | .version')
           if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
             echo "::error::Tag v$version already exists; bump the version first"
             exit 1
@@ -51,20 +46,19 @@ jobs:
       # publishing can be rerun.
       - name: Find unpublished crates
         id: pending
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           packages=""
-          for name in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.publish != []) | .name'); do
+          while read -r name version; do
             status=$(curl -s -o /dev/null -w '%{http_code}' \
               -A "parsyng-publish (https://github.com/${{ github.repository }})" \
-              "https://crates.io/api/v1/crates/$name/$VERSION")
+              "https://crates.io/api/v1/crates/$name/$version")
             case "$status" in
-              200) echo "$name $VERSION is already published" ;;
+              200) echo "$name $version is already published" ;;
               404) packages="$packages -p $name" ;;
               *) echo "::error::Unexpected status $status from crates.io for $name"; exit 1 ;;
             esac
-          done
+          done < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.publish != []) | "\(.name) \(.version)"')
           echo "Publishing:$packages"
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
