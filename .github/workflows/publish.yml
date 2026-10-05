@@ -47,16 +47,42 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # Skip crates already on crates.io, so a run that failed halfway through
+      # publishing can be rerun.
+      - name: Find unpublished crates
+        id: pending
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          packages=""
+          for name in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.publish != []) | .name'); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' \
+              -A "parsyng-publish (https://github.com/${{ github.repository }})" \
+              "https://crates.io/api/v1/crates/$name/$VERSION")
+            case "$status" in
+              200) echo "$name $VERSION is already published" ;;
+              404) packages="$packages -p $name" ;;
+              *) echo "::error::Unexpected status $status from crates.io for $name"; exit 1 ;;
+            esac
+          done
+          echo "Publishing:$packages"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
       - run: cargo fmt --all --check
       # `debug-attribute-example` intentionally fails to compile (it shows the debug output).
       - run: cargo clippy --workspace --all-targets --features fallback,full --exclude debug-attribute-example -- -D warnings
       - run: just test
 
-      - run: cargo publish --workspace --dry-run
-      - if: ${{ !inputs.dry-run }}
-        run: cargo publish --workspace
+      - if: steps.pending.outputs.packages != ''
+        run: cargo publish ${{ steps.pending.outputs.packages }} --dry-run
+      - if: ${{ !inputs.dry-run && steps.pending.outputs.packages != '' }}
+        run: cargo publish ${{ steps.pending.outputs.packages }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          # Wait up to 10 minutes (instead of 60s) for each crate to reach the
+          # index before publishing the crates depending on it.
+          CARGO_UNSTABLE_PUBLISH_TIMEOUT: "true"
+          CARGO_PUBLISH_TIMEOUT: "600"
 
       - name: Tag and release
         if: ${{ !inputs.dry-run }}
